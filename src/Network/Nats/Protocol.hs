@@ -96,6 +96,7 @@ data ProtocolError = MessageParseError String -- ^ The message from the server c
 
 instance Exception ProtocolError
 
+-- | Connection monad for abstracting away IO
 class Monad m => Connection m where
     readBytes  :: S.Socket -> Int -> m BS.ByteString
     writeBytes :: S.Socket -> BS.ByteString -> m Int
