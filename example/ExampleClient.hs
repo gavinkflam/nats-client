@@ -2,13 +2,19 @@
 
 module Main where
 
-import Data.Default
+import Control.Monad (forever)
 import Network.Nats.Client
+import qualified Data.ByteString as B
+
+loop :: NatsClient -> Subject -> IO ()
+loop client subj = B.getLine >>= publish client subj
 
 main :: IO ()
-main = do
-    conn <- connect connectionSettings
-    publish conn (Subject "foo.bar") "test"
-    putStrLn $ show conn
+main = withNats connectionSettings $ \client -> do
+    case makeSubject "foo.bar" of
+        Left err -> putStrLn err
+        Right subj -> do
+            subscribe client subj (\(Message m) -> putStrLn $ show m) Nothing
+            forever $ loop client subj
     where
-        connectionSettings = def ConnectionSettings
+        connectionSettings = defaultConnectionSettings

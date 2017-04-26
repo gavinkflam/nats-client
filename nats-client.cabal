@@ -23,7 +23,11 @@ library
                      , bytestring
                      , data-default
                      , exceptions
+                     , hslogger
+                     , monad-control
                      , network
+                     , random
+                     , resource-pool
                      , text
                      , transformers
   default-language:    Haskell2010
@@ -32,10 +36,34 @@ executable "nats-client"
   hs-source-dirs:      example
   main-is:             ExampleClient.hs
   build-depends:       base >=4.7 && < 5
-                     , data-default
+                     , bytestring
                      , nats-client
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010
+
+test-suite nats-client-test
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      test
+  main-is:             Spec.hs
+  other-modules:       Network.Nats.Protocol.Tests
+  build-depends:       base >=4.7 && < 5
+                     , bytestring
+                     , nats-client
+                     , test-framework
+                     , hedgehog
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
+  default-language:    Haskell2010
+
+benchmark bench-nats-client
+  type:                exitcode-stdio-1.0
+  hs-source-dirs:      bench
+  main-is:             Bench.hs
+  build-depends:       base >=4.7 && < 5
+                     , criterion
+                     , time
+  ghc-options:         -threaded -rtsopts -with-rtsopts=-N
   default-language:    Haskell2010
 
 source-repository head
   type:     git
-  location: https://github.com/githubuser/nats-client
+  location: https://github.com/jpgneves/nats-client
