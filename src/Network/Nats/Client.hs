@@ -32,26 +32,24 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.Pool
 import Data.Typeable
 import GHC.Generics
+import Network
 import Network.Nats.Protocol (Connection, Subject, QueueGroup, NatsServerInfo, Message(..), Subscription, SubscriptionId(..), Subject(..), maxPayloadSize, receiveServerBanner, sendConnect, sendPub, sendSub, sendPong, defaultConnectionOptions, parseSubject, receiveMessage)
+import System.IO (Handle, hClose)
 import System.Log.Logger
 import System.Random
 import qualified Data.ByteString.Char8 as BS
-import qualified Network.Socket as S hiding (recv)
-import qualified Network.Socket.ByteString as SBS
 
 -- | A NATS client. See 'connect'.
 data NatsClient = NatsClient { connections :: Pool NatsServerConnection
                              , settings    :: ConnectionSettings
                              }
 
-data NatsServerConnection = NatsServerConnection { socket   :: S.Socket
-                                                 , natsInfo :: NatsServerInfo
+data NatsServerConnection = NatsServerConnection { natsHandle :: Handle
+                                                 , natsInfo   :: NatsServerInfo
                                                  }
 
-type Host = BS.ByteString
-
 -- | NATS server connection settings
-data ConnectionSettings = ConnectionSettings Host S.PortNumber deriving (Show)
+data ConnectionSettings = ConnectionSettings HostName PortID deriving (Show)
 
 -- |'Message' handling function
 type MessageHandler = (Message -> IO ())
@@ -68,30 +66,29 @@ defaultConnectionSettings :: ConnectionSettings
 defaultConnectionSettings = ConnectionSettings defaultNatsHost defaultNatsPort
 
 -- | Default NATS host to connect to
-defaultNatsHost :: BS.ByteString
+defaultNatsHost :: HostName
 defaultNatsHost = "127.0.0.1"
 
 -- | Default port of the NATS server to connect to
-defaultNatsPort :: S.PortNumber
-defaultNatsPort = 4222
+defaultNatsPort :: PortID
+defaultNatsPort = PortNumber 4222
 
 -- | Convenience default handler for 'Message's
 defaultMessageHandler :: Message -> IO ()
 defaultMessageHandler msg = return ()
 
 makeNatsServerConnection :: (MonadThrow m, MonadIO m, Connection m) => ConnectionSettings -> m NatsServerConnection
-makeNatsServerConnection settings = do
-    (sock, serverAddr) <- liftIO $ createSocket settings
-    liftIO $ S.connect sock (S.addrAddress serverAddr)
-    natsInfo <- liftIO $ receiveServerBanner sock
+makeNatsServerConnection (ConnectionSettings host port) = do
+    h <- liftIO $ connectTo host port
+    natsInfo <- liftIO $ receiveServerBanner h
     case natsInfo of
         Right info -> do
-         sendConnect sock defaultConnectionOptions
-         return $ NatsServerConnection { socket = sock, natsInfo = info }
+         sendConnect h defaultConnectionOptions
+         return $ NatsServerConnection { natsHandle = h, natsInfo = info }
         Left err   -> throwM $ InvalidServerBanner err
 
 destroyNatsServerConnection :: (MonadIO m, Connection m) => NatsServerConnection -> m ()
-destroyNatsServerConnection conn = liftIO $ S.close (socket conn)
+destroyNatsServerConnection conn = liftIO $ hClose (natsHandle conn)
 
 -- | Connect to a NATS server
 connect :: (MonadThrow m, MonadIO m) => ConnectionSettings -> Int -> m NatsClient
@@ -102,12 +99,6 @@ connect settings max_connections = do
 -- | Disconnect from a NATS server
 disconnect :: (MonadIO m) => NatsClient -> m ()
 disconnect conn = liftIO $ destroyAllResources (connections conn)
-
-createSocket :: ConnectionSettings -> IO (S.Socket, S.AddrInfo)
-createSocket (ConnectionSettings host port) = do
-    serverAddr:_ <- S.getAddrInfo Nothing (Just $ BS.unpack host) (Just $ show port)
-    sock <- S.socket (S.addrFamily serverAddr) S.Stream S.defaultProtocol
-    return (sock, serverAddr)
 
 -- | Perform a computation with a NATS connection
 withNats :: (MonadMask m, MonadThrow m, MonadIO m) => ConnectionSettings -> (NatsClient -> m b) -> m b
@@ -122,7 +113,7 @@ doPublish subj msg conn = do
     case payload_length > (maxPayloadSize (natsInfo conn)) of
         True  -> throwM $ PayloadTooLarge $ "Size: " ++ show payload_length ++ ", Max: " ++ show (maxPayloadSize (natsInfo conn))
         False -> liftIO $ sendPub sock subj payload_length msg
-    where sock = (socket conn)
+    where sock = (natsHandle conn)
           payload_length = BS.length msg
 
 -- | Subscribe to a 'Subject' processing 'Message's via a 'MessageHandler'. Returns a 'SubscriptionId' used to cancel subscriptions
@@ -130,7 +121,7 @@ subscribe :: (MonadIO m, MonadBaseControl IO m) => NatsClient -> Subject -> Mess
 subscribe conn subj callback qgroup = do
     (c, pool) <- liftIO $ takeResource (connections conn)
     subId <- liftIO $ generateSubscriptionId 5
-    let sock        = (socket c)
+    let sock        = (natsHandle c)
         max_payload = (maxPayloadSize (natsInfo c))
     liftIO $ sendSub sock subj subId Nothing
     liftIO $ forkFinally (connectionLoop sock max_payload callback) $ handleCompletion sock pool c
@@ -139,20 +130,19 @@ subscribe conn subj callback qgroup = do
 --unsubscribe :: (MonadIO m) -> SubscriptionId -> Maybe Int -> m ()
 --unsubscribe
 
-handleCompletion :: S.Socket -> LocalPool NatsServerConnection -> NatsServerConnection -> Either SomeException b -> IO ()
-handleCompletion sock pool conn (Left exn) = do
+handleCompletion :: Handle -> LocalPool NatsServerConnection -> NatsServerConnection -> Either SomeException b -> IO ()
+handleCompletion h pool conn (Left exn) = do
     warningM "Network.Nats.Client" $ "Connection closed: " ++ (show exn)
-    S.close sock
+    hClose h
     putResource pool conn
-handleCompletion sock pool conn _          = do
+handleCompletion h pool conn _          = do
     warningM "Network.Nats.Client" "Connection ended unexpectedly"
-    S.close sock
+    hClose h
     putResource pool conn
 
-connectionLoop :: S.Socket -> Int -> (Message -> IO ()) -> IO ()
-connectionLoop sock max_payload f = do
-    receiveMessage sock max_payload >>= handleMessage sock f
-    connectionLoop sock max_payload f
+connectionLoop :: Handle -> Int -> (Message -> IO ()) -> IO ()
+connectionLoop h max_payload f =
+    receiveMessage h max_payload >>= handleMessage h f >> connectionLoop h max_payload f
 
 -- | Attempt to create a 'Subject' from a 'BS.ByteString'
 makeSubject :: BS.ByteString -> Either String Subject
@@ -163,7 +153,7 @@ generateSubscriptionId length = do
     gen <- getStdGen
     return $ SubscriptionId $ BS.pack $ take length $ (randoms gen :: [Char])
 
-handleMessage :: S.Socket -> (Message -> IO ()) -> Message -> IO ()
-handleMessage sock _ Ping            = sendPong sock
+handleMessage :: Handle -> (Message -> IO ()) -> Message -> IO ()
+handleMessage h    _ Ping            = sendPong h
 handleMessage _    f msg@(Message m) = f msg
 handleMessage _    _ _               = return ()

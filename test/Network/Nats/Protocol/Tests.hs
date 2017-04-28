@@ -9,16 +9,28 @@ import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
 import qualified Data.ByteString.Char8 as BS
 
-genValidSubjectBytes :: (Monad m, Functor m) => Gen m BS.ByteString
-genValidSubjectBytes = do
-    BS.intercalate "." <$> Gen.list (Range.constant 1 5) (Gen.utf8 (Range.constant 1 10) Gen.alpha)
+invalidBytes :: [Char]
+invalidBytes = " \t\n\r"
+
+genSubjectBytes :: (Monad m, Functor m) => Gen m BS.ByteString
+genSubjectBytes =
+    BS.intercalate "." <$> (Gen.list (Range.constant 1 5) $ Gen.choice [ Gen.utf8 (Range.constant 1 10) Gen.alphaNum
+                                                                       , Gen.utf8 (Range.singleton 1) $ Gen.element (">*" ++ invalidBytes)
+                                                                       ])
+
+genSubject :: (Monad m, Functor m) => Gen m Subject
+genSubject =
+    Subject . (BS.intercalate ".") <$> (Gen.list (Range.constant 1 5) $ Gen.choice [ Gen.utf8 (Range.constant 1 10) Gen.alphaNum
+                                                                                   , Gen.utf8 (Range.singleton 1) $ Gen.element ">*"
+                                                                                   ])
 
 prop_parseValidSubject :: Property
 prop_parseValidSubject =
-    withTests 5000 . property $ do
-        subjectBytes <- forAll genValidSubjectBytes
-        assert $ isRight (parseSubject subjectBytes)
-
+    withTests 10000 . property $ do
+        subjectBytes <- forAll genSubjectBytes
+        assert $ case BS.length (BS.filter (\c -> c `elem` invalidBytes) subjectBytes) of
+            0 -> isRight (parseSubject subjectBytes)
+            _ -> isLeft (parseSubject subjectBytes)
 
 tests :: IO Bool
 tests =

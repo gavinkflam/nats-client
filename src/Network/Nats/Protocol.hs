@@ -34,11 +34,10 @@ import Data.Monoid
 import Data.Word (Word8)
 import Data.Typeable
 import GHC.Generics
+import System.IO (Handle, hClose)
 import qualified Data.Attoparsec.ByteString.Char8 as A
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Text as T
-import qualified Network.Socket as S hiding (send, recv)
-import qualified Network.Socket.ByteString as SBS
 
 -- | Server information returned on connection
 data NatsServerInfo = NatsServerInfo{ srv_server_id     :: T.Text     -- ^ Server ID
@@ -98,14 +97,14 @@ instance Exception ProtocolError
 
 -- | Connection monad for abstracting away IO
 class Monad m => Connection m where
-    readBytes  :: S.Socket -> Int -> m BS.ByteString
-    writeBytes :: S.Socket -> BS.ByteString -> m Int
-    close      :: S.Socket -> m ()
+    readBytes  :: Handle -> Int -> m BS.ByteString
+    writeBytes :: Handle -> Builder -> m ()
+    close      :: Handle -> m ()
 
 instance Connection IO where
-    readBytes  = SBS.recv
-    writeBytes = SBS.send
-    close      = S.close
+    readBytes  = BS.hGet
+    writeBytes = hPutBuilder
+    close      = hClose
 
 -- | Default client connection options, for convenience.
 defaultConnectionOptions :: NatsConnectionOptions
@@ -121,27 +120,45 @@ stripPrefix prefix = drop prefixLength
 -- | Messages received from the NATS server
 data Message = Message BS.ByteString  -- ^ A published message, containing a payload
              | OKMsg                  -- ^ Acknowledgment from server after a client request
-             | ErrorMsg BS.ByteString -- ^ Error message frrom server after a client request
+             | ErrorMsg BS.ByteString -- ^ Error message from server after a client request
              | Banner BS.ByteString   -- ^ Server "banner" received via an INFO message
              | Ping                   -- ^ Server ping challenge
              deriving Show
 
 data Command where
-    Connect :: NatsConnectionOptions -> Command
-    Publish :: Subject -> BS.ByteString -> Command
+    Connect     :: NatsConnectionOptions -> Command
+    Publish     :: Subject -> BS.ByteString -> Command
+    Subscribe   :: Subject -> SubscriptionId -> Maybe QueueGroup -> Command
+    Unsubscribe :: SubscriptionId -> Maybe Int -> Command
+    Pong        :: Command
 
 render :: Command -> Builder
-render (Connect opts) = stringUtf8 "CONNECT " <> lazyByteString (encode opts) <> charUtf8 ' ' <> byteString lineTerminator
-render (Publish subject payload) = stringUtf8 "PUB " <> renderSubject subject <> charUtf8 ' ' <> renderPayload payload <> byteString lineTerminator
+render (Connect opts) =
+    stringUtf8 "CONNECT " <> lazyByteString (encode opts) <> charUtf8 ' ' <> byteString lineTerminator
+render (Publish subject payload) =
+    stringUtf8 "PUB " <> renderSubject subject <> charUtf8 ' ' <> renderPayload payload <> byteString lineTerminator
+render (Subscribe subject subId qgroup) =
+    stringUtf8 "SUB " <> renderSubject subject <> charUtf8 ' ' <> renderSubscriptionId subId <> charUtf8 ' ' <> byteString lineTerminator
+render (Unsubscribe subId max_msgs) =
+    stringUtf8 "UNSUB " <> renderSubscriptionId subId <> charUtf8 ' ' <> byteString lineTerminator
+render Pong =
+    stringUtf8 "PONG " <> byteString lineTerminator
 
 renderSubject :: Subject -> Builder
 renderSubject (Subject s) = byteString s
 
+renderSubscriptionId :: SubscriptionId -> Builder
+renderSubscriptionId (SubscriptionId i) = byteString i
+
 renderPayload :: BS.ByteString -> Builder
 renderPayload p = intDec (BS.length p) <> byteString lineTerminator <> byteString p
 
+sendCommand :: (Connection m) => Handle -> Command -> m ()
+sendCommand sock cmd =
+    writeBytes sock $ render cmd
+
 -- | Receive the initial server banner from an INFO message, or an error message if it cannot be parsed.
-receiveServerBanner :: Connection m => S.Socket -> m (Either String NatsServerInfo)
+receiveServerBanner :: Connection m => Handle -> m (Either String NatsServerInfo)
 receiveServerBanner socket = do
     bannerBytes <- readBytes socket maxBytes
     
@@ -150,11 +167,11 @@ receiveServerBanner socket = do
         Right (Banner b) -> return $ eitherDecodeStrict b
     where maxBytes = 1024
 
-receiveRawMessage :: Connection m => S.Socket -> Int -> m BS.ByteString
+receiveRawMessage :: Connection m => Handle -> Int -> m BS.ByteString
 receiveRawMessage sock maxPayloadSize = readBytes sock maxPayloadSize
 
 -- | Receive a 'Message' from the server
-receiveMessage :: (MonadThrow m, Connection m) => S.Socket -> Int -> m Message
+receiveMessage :: (MonadThrow m, Connection m) => Handle -> Int -> m Message
 receiveMessage sock maxPayloadSize = do
     msg <- receiveRawMessage sock maxPayloadSize
     case A.parseOnly messageParser msg of
@@ -171,48 +188,25 @@ bannerParser = do
     banner <- A.takeByteString
     return $ Banner banner
 
-doSend :: Connection m => S.Socket -> BS.ByteString -> m Int
-doSend sock msg = writeBytes sock msg
-
 -- | Send a "CONNECT" message to the server
-sendConnect :: Connection m => S.Socket -> NatsConnectionOptions -> m ()
-sendConnect sock opts = do
-    bytesSent <- doSend sock connectionString
-    return ()
-    where connectionString = BS.concat ["CONNECT ", toStrict $ encode opts, lineTerminator]
+sendConnect :: Connection m => Handle -> NatsConnectionOptions -> m ()
+sendConnect handle opts = sendCommand handle $ Connect opts
 
 -- | Send a publish request to the server
-sendPub :: Connection m => S.Socket -> Subject -> Int -> BS.ByteString -> m ()
-sendPub sock (Subject subj) payload_len payload = do
-    bytesSent <- doSend sock msg
-    return ()
-    where msg = BS.concat ["PUB ", subj, " ", BS.pack $ show payload_len, lineTerminator, payload, lineTerminator]
+sendPub :: Connection m => Handle -> Subject -> Int -> BS.ByteString -> m ()
+sendPub handle subj payload_len payload = sendCommand handle $ Publish subj payload
 
 -- | Send a Subscription request to a 'Subject', with a 'SubscriptionId' and optionally a 'QueueGroup'.
-sendSub :: Connection m => S.Socket -> Subject -> SubscriptionId -> Maybe QueueGroup -> m ()
-sendSub sock (Subject subj) (SubscriptionId subId) qgroup = do
-    bytesSent <- doSend sock msg
-    return ()
-    where msg = BS.concat ["SUB ", subj, " ", subId, lineTerminator]
+sendSub :: Connection m => Handle -> Subject -> SubscriptionId -> Maybe QueueGroup -> m ()
+sendSub handle subj subId qgroup = sendCommand handle $ Subscribe subj subId qgroup
 
 -- | Send an unsubscription request with a 'SubscriptionId' and optionally a maximum number of messages that will still be listened to.
-sendUnsub :: Connection m => S.Socket -> SubscriptionId -> Maybe Int -> m ()
-sendUnsub sock (SubscriptionId subId) max_msgs = do
-    let msg = case max_msgs of
-                Just m  -> BS.concat ["UNSUB ", subId, BS.pack $ show m, lineTerminator]
-                Nothing -> BS.concat ["UNSUB ", subId, lineTerminator]
-    bytesSent <- doSend sock msg
-    return ()
-
+sendUnsub :: Connection m => Handle -> SubscriptionId -> Maybe Int -> m ()
+sendUnsub handle subId max_msgs = sendCommand handle $ Unsubscribe subId max_msgs
+ 
 -- | Send a "PONG" message to the server, typically in reply to a "PING" challenge.
-sendPong :: Connection m => S.Socket -> m ()
-sendPong sock = do
-    bytesSent <- doSend sock msg
-    return ()
-    where msg = BS.concat ["PONG", lineTerminator]
-
-sendNatsMsg :: Connection m => S.Socket -> BS.ByteString -> m ()
-sendNatsMsg sock msg = doSend sock msg >> return ()
+sendPong :: Connection m => Handle -> m ()
+sendPong handle = sendCommand handle $ Pong
 
 -- | Name of a NATS subject. Must be a dot-separated alphanumeric string, with ">" and "." as wildcard characters. See <http://nats.io/documentation/internals/nats-protocol/>
 newtype Subject = Subject BS.ByteString deriving (Show)
@@ -231,9 +225,8 @@ parseSubject = A.parseOnly $ subjectParser <* A.endOfInput
 
 subjectParser :: A.Parser Subject
 subjectParser = do
-    tokens <- (A.takeWhile A.isSpace) `A.sepBy` (A.char '.')
-    subj <- A.takeTill A.isSpace
-    return $ Subject subj
+    tokens <- (A.takeWhile1 $ not . A.isSpace) `A.sepBy` (A.char '.')
+    return $ Subject $ BS.intercalate "." tokens
 
 msgParser :: A.Parser Message
 msgParser = do
