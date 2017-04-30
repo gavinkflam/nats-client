@@ -2,9 +2,7 @@
 Module      : Network.Nats.Client
 Description : Main interface to the NATS client library
 -}
-{-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE FlexibleContexts #-}
-{-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Network.Nats.Client (
@@ -24,7 +22,7 @@ module Network.Nats.Client (
     , Message (..)
     ) where
 
-import Control.Concurrent (ThreadId, forkFinally)
+import Control.Concurrent (forkFinally)
 import Control.Concurrent.MVar
 import Control.Exception hiding (catch, bracket)
 import Control.Monad.Catch
@@ -33,7 +31,6 @@ import Control.Monad.Trans.Control (MonadBaseControl)
 import Data.IORef
 import Data.Pool
 import Data.Typeable
-import GHC.Generics
 import Network
 import Network.Nats.Protocol
 import System.IO (Handle, BufferMode(LineBuffering), hClose, hSetBuffering)

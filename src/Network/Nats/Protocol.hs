@@ -1,10 +1,11 @@
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE GADTs #-}
 {-|
 Module      : Network.Nats.Protocol
 Description : Implementation of the NATS client protocol
 -}
 {-# LANGUAGE DeriveGeneric #-}
+{-# LANGUAGE GADTs #-}
+{-# LANGUAGE OverloadedStrings #-}
+
 module Network.Nats.Protocol (
     Connection,
     NatsConnectionOptions,
