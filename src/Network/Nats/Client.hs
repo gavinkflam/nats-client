@@ -35,29 +35,11 @@ import Data.Pool
 import Data.Typeable
 import GHC.Generics
 import Network
-import Network.Nats.Protocol (
-      Connection
-    , Subject
-    , QueueGroup
-    , NatsServerInfo
-    , Message(..)
-    , Subscription
-    , SubscriptionId(..)
-    , Subject(..)
-    , maxPayloadSize
-    , receiveServerBanner
-    , sendConnect
-    , sendPong
-    , sendPub
-    , sendSub
-    , sendUnsub
-    , defaultConnectionOptions
-    , parseSubject
-    , receiveMessage
-    )
+import Network.Nats.Protocol
 import System.IO (Handle, BufferMode(LineBuffering), hClose, hSetBuffering)
 import System.Log.Logger
 import System.Random
+import System.Timeout
 import qualified Data.Map as M
 import qualified Data.ByteString.Char8 as BS
 
@@ -79,6 +61,7 @@ data ConnectionSettings = ConnectionSettings HostName PortID deriving (Show)
 type MessageHandler = (Message -> IO ())
 
 data NatsError = ConnectionFailure
+               | ConnectionTimeout
                | InvalidServerBanner String
                | PayloadTooLarge String
     deriving (Show, Typeable)
@@ -103,17 +86,22 @@ defaultMessageHandler msg = return ()
 
 makeNatsServerConnection :: (MonadThrow m, MonadIO m, Connection m) => ConnectionSettings -> m NatsServerConnection
 makeNatsServerConnection (ConnectionSettings host port) = do
-    h <- liftIO $ connectTo host port
-    liftIO $ hSetBuffering h LineBuffering
-    natsInfo <- liftIO $ receiveServerBanner h
-    liftIO $ debugM "Network.Nats.Client" $ "Received server info " ++ show natsInfo
-    case natsInfo of
-        Right info -> do
-         sendConnect h defaultConnectionOptions
-         maxMsgs <- liftIO $ newIORef Nothing
-         sub <- liftIO $ newIORef Nothing
-         return $ NatsServerConnection { natsHandle = h, natsInfo = info, maxMessages = maxMsgs }
-        Left err   -> throwM $ InvalidServerBanner err
+    mh <- liftIO $ timeout defaultTimeout $ connectTo host port
+    case mh of
+        Nothing -> do
+            liftIO $ warningM "Network.Nats.Client" $ "Timed out connecting to server: " ++ (show host) ++ ":" ++ (show port)
+            throwM ConnectionTimeout
+        Just h  -> do
+            liftIO $ hSetBuffering h LineBuffering
+            natsInfo <- liftIO $ receiveServerBanner h
+            liftIO $ debugM "Network.Nats.Client" $ "Received server info " ++ show natsInfo
+            case natsInfo of
+                Right info -> do
+                    sendConnect h defaultConnectionOptions
+                    maxMsgs <- liftIO $ newIORef Nothing
+                    sub <- liftIO $ newIORef Nothing
+                    return $ NatsServerConnection { natsHandle = h, natsInfo = info, maxMessages = maxMsgs }
+                Left err   -> throwM $ InvalidServerBanner err
 
 destroyNatsServerConnection :: (MonadIO m, Connection m) => NatsServerConnection -> m ()
 destroyNatsServerConnection conn = liftIO $ hClose (natsHandle conn)

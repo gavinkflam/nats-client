@@ -24,8 +24,8 @@ genSubject =
                                                                                    , Gen.utf8 (Range.singleton 1) $ Gen.element ">*"
                                                                                    ])
 
-prop_parseValidSubject :: Property
-prop_parseValidSubject =
+prop_parseSubject :: Property
+prop_parseSubject =
     withTests 10000 . property $ do
         subjectBytes <- forAll genSubjectBytes
         assert $ case BS.length (BS.filter (\c -> c `elem` invalidBytes) subjectBytes) of

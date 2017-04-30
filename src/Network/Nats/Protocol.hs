@@ -16,6 +16,7 @@ module Network.Nats.Protocol (
     ProtocolError,
     Message(..),
     defaultConnectionOptions,
+    defaultTimeout,
     maxPayloadSize,
     parseSubject, receiveMessage, receiveServerBanner, sendConnect, sendPong, sendPub, sendSub, sendUnsub) where
 
@@ -24,7 +25,7 @@ import Control.Concurrent (ThreadId, forkFinally)
 import Control.Exception
 import Control.Exception.Base (SomeException, bracket)
 import Control.Monad.Catch
-import Control.Monad.IO.Class (liftIO)
+import Control.Monad.IO.Class (liftIO, MonadIO)
 import Data.Aeson hiding (Object)
 import Data.Aeson.Types (Options(..))
 import Data.ByteString.Builder
@@ -35,6 +36,8 @@ import Data.Word (Word8)
 import Data.Typeable
 import GHC.Generics
 import System.IO (Handle, hClose)
+import System.Log.Logger
+import System.Timeout
 import qualified Data.Attoparsec.ByteString.Char8 as A
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.Text as T
@@ -87,7 +90,7 @@ instance Default NatsConnectionOptions where
 
 
 -- | Type for representing Queue Groups, used to implement round-robin receivers
-newtype QueueGroup = QueueGroup BS.ByteString
+newtype QueueGroup = QueueGroup BS.ByteString deriving Show
 
 -- | Type for unexpected protocol errors
 data ProtocolError = MessageParseError String -- ^ The message from the server could not be parsed.
@@ -96,7 +99,7 @@ data ProtocolError = MessageParseError String -- ^ The message from the server c
 instance Exception ProtocolError
 
 -- | Connection monad for abstracting away IO
-class Monad m => Connection m where
+class (Monad m, MonadIO m) => Connection m where
     readBytes  :: Handle -> Int -> m BS.ByteString
     writeBytes :: Handle -> Builder -> m ()
     close      :: Handle -> m ()
@@ -109,6 +112,10 @@ instance Connection IO where
 -- | Default client connection options, for convenience.
 defaultConnectionOptions :: NatsConnectionOptions
 defaultConnectionOptions = def NatsConnectionOptions
+
+-- | Default client timeout
+defaultTimeout :: Int
+defaultTimeout = 1000000
 
 addPrefix :: String -> String -> String
 addPrefix prefix = \x -> prefix ++ x
@@ -131,6 +138,7 @@ data Command where
     Subscribe   :: Subject -> SubscriptionId -> Maybe QueueGroup -> Command
     Unsubscribe :: SubscriptionId -> Maybe Int -> Command
     Pong        :: Command
+    deriving (Show)
 
 render :: Command -> Builder
 render (Connect opts) =
@@ -154,8 +162,11 @@ renderPayload :: BS.ByteString -> Builder
 renderPayload p = intDec (BS.length p) <> byteString lineTerminator <> byteString p
 
 sendCommand :: (Connection m) => Handle -> Command -> m ()
-sendCommand sock cmd =
-    writeBytes sock $ render cmd
+sendCommand sock cmd = do
+    r <- liftIO $ timeout defaultTimeout $ writeBytes sock $ render cmd
+    case r of
+        Nothing -> liftIO $ warningM "Nats.Client.Protocol" $ "Timed out sending command " ++ (show cmd)
+        Just _  -> return ()
 
 -- | Receive the initial server banner from an INFO message, or an error message if it cannot be parsed.
 receiveServerBanner :: Connection m => Handle -> m (Either String NatsServerInfo)

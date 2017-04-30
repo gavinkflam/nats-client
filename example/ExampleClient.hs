@@ -11,11 +11,11 @@ loop client subj = B.getLine >>= publish client subj
 
 main :: IO ()
 main = withNats connectionSettings $ \client -> do
-    case makeSubject "foo.bar" of
-        Left err -> putStrLn err
+    case makeSubject "foo.bar.*" of
+        Left err -> putStrLn $ "Invalid subject " ++ err
         Right subj -> do
             subId <- subscribe client subj (\(Message m) -> putStrLn $ show m) Nothing
-            unsubscribe client subId (Just 1)
+            unsubscribe client subId (Just 5)
             forever $ loop client subj
     where
         connectionSettings = defaultConnectionSettings
