@@ -158,6 +158,7 @@ subscribe conn subj callback qgroup = do
     liftIO $ modifyMVarMasked_ (subscriptions conn) $ \m -> return $ M.insert subId c m
     return subId
 
+-- | Unsubscribe to a 'SubjectId' (returned by 'subscribe'), with an optional max amount of additional messages to listen to
 unsubscribe :: (MonadIO m, MonadBaseControl IO m) => NatsClient -> SubscriptionId -> Maybe Int -> m ()
 unsubscribe conn subId msgs@(Just maxMsgs) = do
     liftIO $ withMVarMasked (subscriptions conn) $ \m -> doUnsubscribe m subId maxMsgs
