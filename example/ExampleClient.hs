@@ -14,7 +14,8 @@ main = withNats connectionSettings $ \client -> do
     case makeSubject "foo.bar" of
         Left err -> putStrLn err
         Right subj -> do
-            subscribe client subj (\(Message m) -> putStrLn $ show m) Nothing
+            subId <- subscribe client subj (\(Message m) -> putStrLn $ show m) Nothing
+            unsubscribe client subId (Just 1)
             forever $ loop client subj
     where
         connectionSettings = defaultConnectionSettings

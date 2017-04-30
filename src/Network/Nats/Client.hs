@@ -14,6 +14,7 @@ module Network.Nats.Client (
     , connect
     , publish
     , subscribe
+    , unsubscribe
     , withNats
     , makeSubject
     , ConnectionSettings
@@ -29,23 +30,46 @@ import Control.Exception hiding (catch, bracket)
 import Control.Monad.Catch
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Control (MonadBaseControl)
+import Data.IORef
 import Data.Pool
 import Data.Typeable
 import GHC.Generics
 import Network
-import Network.Nats.Protocol (Connection, Subject, QueueGroup, NatsServerInfo, Message(..), Subscription, SubscriptionId(..), Subject(..), maxPayloadSize, receiveServerBanner, sendConnect, sendPub, sendSub, sendPong, defaultConnectionOptions, parseSubject, receiveMessage)
-import System.IO (Handle, hClose)
+import Network.Nats.Protocol (
+      Connection
+    , Subject
+    , QueueGroup
+    , NatsServerInfo
+    , Message(..)
+    , Subscription
+    , SubscriptionId(..)
+    , Subject(..)
+    , maxPayloadSize
+    , receiveServerBanner
+    , sendConnect
+    , sendPong
+    , sendPub
+    , sendSub
+    , sendUnsub
+    , defaultConnectionOptions
+    , parseSubject
+    , receiveMessage
+    )
+import System.IO (Handle, BufferMode(LineBuffering), hClose, hSetBuffering)
 import System.Log.Logger
 import System.Random
+import qualified Data.Map as M
 import qualified Data.ByteString.Char8 as BS
 
 -- | A NATS client. See 'connect'.
-data NatsClient = NatsClient { connections :: Pool NatsServerConnection
-                             , settings    :: ConnectionSettings
+data NatsClient = NatsClient { connections   :: Pool NatsServerConnection
+                             , settings      :: ConnectionSettings
+                             , subscriptions :: MVar (M.Map SubscriptionId NatsServerConnection)
                              }
 
-data NatsServerConnection = NatsServerConnection { natsHandle :: Handle
-                                                 , natsInfo   :: NatsServerInfo
+data NatsServerConnection = NatsServerConnection { natsHandle   :: Handle
+                                                 , natsInfo     :: NatsServerInfo
+                                                 , maxMessages  :: IORef (Maybe Int)
                                                  }
 
 -- | NATS server connection settings
@@ -80,11 +104,15 @@ defaultMessageHandler msg = return ()
 makeNatsServerConnection :: (MonadThrow m, MonadIO m, Connection m) => ConnectionSettings -> m NatsServerConnection
 makeNatsServerConnection (ConnectionSettings host port) = do
     h <- liftIO $ connectTo host port
+    liftIO $ hSetBuffering h LineBuffering
     natsInfo <- liftIO $ receiveServerBanner h
+    liftIO $ debugM "Network.Nats.Client" $ "Received server info " ++ show natsInfo
     case natsInfo of
         Right info -> do
          sendConnect h defaultConnectionOptions
-         return $ NatsServerConnection { natsHandle = h, natsInfo = info }
+         maxMsgs <- liftIO $ newIORef Nothing
+         sub <- liftIO $ newIORef Nothing
+         return $ NatsServerConnection { natsHandle = h, natsInfo = info, maxMessages = maxMsgs }
         Left err   -> throwM $ InvalidServerBanner err
 
 destroyNatsServerConnection :: (MonadIO m, Connection m) => NatsServerConnection -> m ()
@@ -94,7 +122,8 @@ destroyNatsServerConnection conn = liftIO $ hClose (natsHandle conn)
 connect :: (MonadThrow m, MonadIO m) => ConnectionSettings -> Int -> m NatsClient
 connect settings max_connections = do
     connpool <- liftIO $ createPool (makeNatsServerConnection settings) destroyNatsServerConnection 1 60 max_connections
-    return $ NatsClient { connections = connpool, settings = settings }
+    subs <- liftIO $ newMVar M.empty
+    return $ NatsClient { connections = connpool, settings = settings, subscriptions = subs }
 
 -- | Disconnect from a NATS server
 disconnect :: (MonadIO m) => NatsClient -> m ()
@@ -123,26 +152,50 @@ subscribe conn subj callback qgroup = do
     subId <- liftIO $ generateSubscriptionId 5
     let sock        = (natsHandle c)
         max_payload = (maxPayloadSize (natsInfo c))
+        maxMsgs     = (maxMessages c)
     liftIO $ sendSub sock subj subId Nothing
-    liftIO $ forkFinally (connectionLoop sock max_payload callback) $ handleCompletion sock pool c
+    liftIO $ forkFinally (connectionLoop sock max_payload callback maxMsgs) $ handleCompletion sock pool c
+    liftIO $ modifyMVarMasked_ (subscriptions conn) $ \m -> return $ M.insert subId c m
     return subId
 
---unsubscribe :: (MonadIO m) -> SubscriptionId -> Maybe Int -> m ()
---unsubscribe
+unsubscribe :: (MonadIO m, MonadBaseControl IO m) => NatsClient -> SubscriptionId -> Maybe Int -> m ()
+unsubscribe conn subId msgs@(Just maxMsgs) = do
+    liftIO $ withMVarMasked (subscriptions conn) $ \m -> doUnsubscribe m subId maxMsgs
+    withResource (connections conn) $ \s -> liftIO $ sendUnsub (natsHandle s) subId msgs
+unsubscribe conn subId msgs@Nothing        = do
+    liftIO $ withMVarMasked (subscriptions conn) $ \m -> doUnsubscribe m subId 0
+    withResource (connections conn) $ \s -> liftIO $ sendUnsub (natsHandle s) subId msgs
+
+doUnsubscribe :: M.Map SubscriptionId NatsServerConnection -> SubscriptionId -> Int -> IO ()
+doUnsubscribe m subId maxMsgs = do
+    case M.lookup subId m of
+        Nothing ->
+            warningM "Network.Nats.Client" $ "Could not find subscription " ++ (show subId)
+        Just c -> do
+            atomicWriteIORef (maxMessages c) (Just maxMsgs)
+
 
 handleCompletion :: Handle -> LocalPool NatsServerConnection -> NatsServerConnection -> Either SomeException b -> IO ()
 handleCompletion h pool conn (Left exn) = do
     warningM "Network.Nats.Client" $ "Connection closed: " ++ (show exn)
     hClose h
-    putResource pool conn
+    cleanup pool conn
 handleCompletion h pool conn _          = do
-    warningM "Network.Nats.Client" "Connection ended unexpectedly"
-    hClose h
+    debugM "Network.Nats.Client" "Subscription finished"
+    cleanup pool conn
+
+cleanup :: LocalPool NatsServerConnection -> NatsServerConnection -> IO ()
+cleanup pool conn = do
+    atomicWriteIORef (maxMessages conn) Nothing
     putResource pool conn
 
-connectionLoop :: Handle -> Int -> (Message -> IO ()) -> IO ()
-connectionLoop h max_payload f =
-    receiveMessage h max_payload >>= handleMessage h f >> connectionLoop h max_payload f
+connectionLoop :: Handle -> Int -> (Message -> IO ()) -> IORef (Maybe Int) -> IO ()
+connectionLoop h max_payload f maxMsgsRef = do
+    maxMsgs <- readIORef maxMsgsRef
+    case maxMsgs of
+        Just 0 -> return ()
+        _      ->
+            receiveMessage h max_payload >>= (\m -> handleMessage h f m maxMsgs) >>= atomicWriteIORef maxMsgsRef >> connectionLoop h max_payload f maxMsgsRef
 
 -- | Attempt to create a 'Subject' from a 'BS.ByteString'
 makeSubject :: BS.ByteString -> Either String Subject
@@ -153,7 +206,13 @@ generateSubscriptionId length = do
     gen <- getStdGen
     return $ SubscriptionId $ BS.pack $ take length $ (randoms gen :: [Char])
 
-handleMessage :: Handle -> (Message -> IO ()) -> Message -> IO ()
-handleMessage h    _ Ping            = sendPong h
-handleMessage _    f msg@(Message m) = f msg
-handleMessage _    _ _               = return ()
+handleMessage :: Handle -> (Message -> IO ()) -> Message -> Maybe Int -> IO (Maybe Int)
+handleMessage h    _ Ping            m = do
+    sendPong h
+    return m
+handleMessage _    f msg@(Message m) maxMsgs = do
+    f msg
+    case maxMsgs of
+        Nothing  -> return Nothing
+        (Just n) -> return $ Just (n - 1)
+handleMessage _    _ _               m = return m

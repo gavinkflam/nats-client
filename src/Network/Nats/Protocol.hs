@@ -102,7 +102,7 @@ class Monad m => Connection m where
     close      :: Handle -> m ()
 
 instance Connection IO where
-    readBytes  = BS.hGet
+    readBytes  = BS.hGetSome
     writeBytes = hPutBuilder
     close      = hClose
 
@@ -161,7 +161,6 @@ sendCommand sock cmd =
 receiveServerBanner :: Connection m => Handle -> m (Either String NatsServerInfo)
 receiveServerBanner socket = do
     bannerBytes <- readBytes socket maxBytes
-    
     case A.parseOnly bannerParser bannerBytes of
         Left err -> return $ Left err
         Right (Banner b) -> return $ eitherDecodeStrict b
@@ -212,12 +211,14 @@ sendPong handle = sendCommand handle $ Pong
 newtype Subject = Subject BS.ByteString deriving (Show)
 
 -- | A subscription to a 'Subject'
-data Subscription = Subscription { subject :: Subject
+data Subscription = Subscription { subject        :: Subject
+                                 , subscriptionId :: SubscriptionId
                                  }
                     deriving (Show)
 
 -- | A 'Subscription' identifier
 newtype SubscriptionId = SubscriptionId BS.ByteString
+                    deriving (Show, Ord, Eq)
 
 -- | Parse a 'BS.ByteString' into a 'Subject' or return an error message. See <http://nats.io/documentation/internals/nats-protocol/>
 parseSubject :: BS.ByteString -> Either String Subject

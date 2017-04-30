@@ -21,6 +21,7 @@ library
                      , aeson
                      , attoparsec
                      , bytestring
+                     , containers
                      , data-default
                      , exceptions
                      , hslogger
