@@ -154,7 +154,7 @@ subscribe conn subj callback qgroup = do
         max_payload = (maxPayloadSize (natsInfo c))
         maxMsgs     = (maxMessages c)
     liftIO $ sendSub sock subj subId Nothing
-    liftIO $ forkFinally (connectionLoop sock max_payload callback maxMsgs) $ handleCompletion sock pool c
+    liftIO $ forkFinally (connectionLoop sock max_payload callback maxMsgs) $ handleCompletion sock (connections conn) pool c
     liftIO $ modifyMVarMasked_ (subscriptions conn) $ \m -> return $ M.insert subId c m
     return subId
 
@@ -175,19 +175,17 @@ doUnsubscribe m subId maxMsgs = do
             atomicWriteIORef (maxMessages c) (Just maxMsgs)
 
 
-handleCompletion :: Handle -> LocalPool NatsServerConnection -> NatsServerConnection -> Either SomeException b -> IO ()
-handleCompletion h pool conn (Left exn) = do
+handleCompletion :: Handle -> Pool NatsServerConnection -> LocalPool NatsServerConnection -> NatsServerConnection -> Either SomeException b -> IO ()
+handleCompletion h pool lpool conn (Left exn) = do
     warningM "Network.Nats.Client" $ "Connection closed: " ++ (show exn)
     hClose h
-    cleanup pool conn
-handleCompletion h pool conn _          = do
+    destroyResource pool lpool conn
+handleCompletion h _ lpool conn _          = do
     debugM "Network.Nats.Client" "Subscription finished"
-    cleanup pool conn
-
-cleanup :: LocalPool NatsServerConnection -> NatsServerConnection -> IO ()
-cleanup pool conn = do
     atomicWriteIORef (maxMessages conn) Nothing
-    putResource pool conn
+    putResource lpool conn
+
+
 
 connectionLoop :: Handle -> Int -> (Message -> IO ()) -> IORef (Maybe Int) -> IO ()
 connectionLoop h max_payload f maxMsgsRef = do
