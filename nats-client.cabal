@@ -67,4 +67,4 @@ benchmark bench-nats-client
 
 source-repository head
   type:     git
-  location: https://github.com/jpgneves/nats-client
+  location: https://bitbucket.com/jpgneves/nats-client
