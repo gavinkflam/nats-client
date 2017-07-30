@@ -72,6 +72,7 @@ data NatsConnectionOptions = NatsConnectionOptions{ clnt_verbose      :: Bool   
                                                   , clnt_name         :: T.Text -- ^ Client name
                                                   , clnt_lang         :: T.Text -- ^ Client implementation language
                                                   , clnt_version      :: T.Text -- ^ Client version
+                                                  , clnt_protocol     :: Int    -- ^ Client protocol
                                                   }
                                                   deriving (Generic, Show)
 
@@ -87,6 +88,7 @@ instance Default NatsConnectionOptions where
                                 , clnt_name         = ""
                                 , clnt_lang         = "haskell"
                                 , clnt_version      = "0.1.0"
+                                , clnt_protocol     = 1
                                 }
 
 
@@ -143,15 +145,30 @@ data Command where
 
 render :: Command -> Builder
 render (Connect opts) =
-    stringUtf8 "CONNECT " <> lazyByteString (encode opts) <> charUtf8 ' ' <> byteString lineTerminator
+    stringUtf8 "CONNECT "
+    <> lazyByteString (encode opts)
+    <> charUtf8 ' '
+    <> byteString lineTerminator
 render (Publish subject payload) =
-    stringUtf8 "PUB " <> renderSubject subject <> charUtf8 ' ' <> renderPayload payload <> byteString lineTerminator
+    stringUtf8 "PUB "
+    <> renderSubject subject
+    <> charUtf8 ' '
+    <> renderPayload payload
+    <> byteString lineTerminator
 render (Subscribe subject subId qgroup) =
-    stringUtf8 "SUB " <> renderSubject subject <> charUtf8 ' ' <> renderSubscriptionId subId <> charUtf8 ' ' <> byteString lineTerminator
+    stringUtf8 "SUB "
+    <> renderSubject subject
+    <> charUtf8 ' '
+    <> renderSubscriptionId subId
+    <> charUtf8 ' '
+    <> byteString lineTerminator
 render (Unsubscribe subId max_msgs) =
-    stringUtf8 "UNSUB " <> renderSubscriptionId subId <> charUtf8 ' ' <> byteString lineTerminator
+    stringUtf8 "UNSUB "
+    <> renderSubscriptionId subId <> charUtf8 ' '
+    <> byteString lineTerminator
 render Pong =
-    stringUtf8 "PONG " <> byteString lineTerminator
+    stringUtf8 "PONG "
+    <> byteString lineTerminator
 
 renderSubject :: Subject -> Builder
 renderSubject (Subject s) = byteString s

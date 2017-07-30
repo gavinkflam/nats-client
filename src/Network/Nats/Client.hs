@@ -15,7 +15,7 @@ module Network.Nats.Client (
     , unsubscribe
     , withNats
     , makeSubject
-    , ConnectionSettings
+    , ConnectionSettings(..)
     , MessageHandler
     , NatsClient
     , Subject
@@ -38,12 +38,14 @@ import System.Log.Logger
 import System.Random
 import System.Timeout
 import qualified Data.Map as M
+import qualified Data.Set as S
 import qualified Data.ByteString.Char8 as BS
 
 -- | A NATS client. See 'connect'.
 data NatsClient = NatsClient { connections   :: Pool NatsServerConnection
                              , settings      :: ConnectionSettings
                              , subscriptions :: MVar (M.Map SubscriptionId NatsServerConnection)
+                             , servers       :: MVar (S.Set (HostName, PortID))
                              }
 
 data NatsServerConnection = NatsServerConnection { natsHandle   :: Handle
@@ -77,12 +79,15 @@ defaultNatsHost = "127.0.0.1"
 defaultNatsPort :: PortID
 defaultNatsPort = PortNumber 4222
 
+instance Ord PortID where
+    (<=) (PortNumber a) (PortNumber b) = a <= b
+
 -- | Convenience default handler for 'Message's
 defaultMessageHandler :: Message -> IO ()
 defaultMessageHandler msg = return ()
 
-makeNatsServerConnection :: (MonadThrow m, MonadIO m, Connection m) => ConnectionSettings -> m NatsServerConnection
-makeNatsServerConnection (ConnectionSettings host port) = do
+makeNatsServerConnection :: (MonadThrow m, MonadIO m, Connection m) => ConnectionSettings -> MVar (S.Set (HostName, PortID)) -> m NatsServerConnection
+makeNatsServerConnection (ConnectionSettings host port) servers = do
     mh <- liftIO $ timeout defaultTimeout $ connectTo host port
     case mh of
         Nothing -> do
@@ -91,12 +96,13 @@ makeNatsServerConnection (ConnectionSettings host port) = do
         Just h  -> do
             liftIO $ hSetBuffering h LineBuffering
             natsInfo <- liftIO $ receiveServerBanner h
-            liftIO $ debugM "Network.Nats.Client" $ "Received server info " ++ show natsInfo
+            liftIO $ warningM "Network.Nats.Client" $ "Received server info " ++ show natsInfo
             case natsInfo of
                 Right info -> do
                     sendConnect h defaultConnectionOptions
                     maxMsgs <- liftIO $ newIORef Nothing
                     sub <- liftIO $ newIORef Nothing
+                    liftIO $ modifyMVarMasked_ servers $ \srvs -> return $ S.insert (host, port) srvs
                     return $ NatsServerConnection { natsHandle = h, natsInfo = info, maxMessages = maxMsgs }
                 Left err   -> throwM $ InvalidServerBanner err
 
@@ -106,9 +112,10 @@ destroyNatsServerConnection conn = liftIO $ hClose (natsHandle conn)
 -- | Connect to a NATS server
 connect :: (MonadThrow m, MonadIO m) => ConnectionSettings -> Int -> m NatsClient
 connect settings max_connections = do
-    connpool <- liftIO $ createPool (makeNatsServerConnection settings) destroyNatsServerConnection 1 60 max_connections
+    servers <- liftIO $ newMVar S.empty
+    connpool <- liftIO $ createPool (makeNatsServerConnection settings servers) destroyNatsServerConnection 1 300 max_connections
     subs <- liftIO $ newMVar M.empty
-    return $ NatsClient { connections = connpool, settings = settings, subscriptions = subs }
+    return $ NatsClient { connections = connpool, settings = settings, subscriptions = subs, servers = servers }
 
 -- | Disconnect from a NATS server
 disconnect :: (MonadIO m) => NatsClient -> m ()
@@ -199,4 +206,6 @@ handleMessage _    f msg@(Message m) maxMsgs = do
     case maxMsgs of
         Nothing  -> return Nothing
         (Just n) -> return $ Just (n - 1)
-handleMessage _    _ _               m = return m
+handleMessage _    _ msg               m = do
+    warningM "Network.Nats.Client" $ "Received " ++ (show msg)
+    return m
