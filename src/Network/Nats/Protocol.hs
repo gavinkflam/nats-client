@@ -9,7 +9,7 @@ Description : Implementation of the NATS client protocol
 module Network.Nats.Protocol (
     Connection,
     NatsConnectionOptions,
-    NatsServerInfo,
+    NatsServerInfo(NatsServerInfo),
     Subject(..),
     Subscription,
     SubscriptionId(..),
@@ -107,6 +107,7 @@ class (Monad m, MonadIO m) => Connection m where
     writeBytes :: Handle -> Builder -> m ()
     close      :: Handle -> m ()
 
+-- | Default IO implementation using bytestrings
 instance Connection IO where
     readBytes  = BS.hGetSome
     writeBytes = hPutBuilder
@@ -116,7 +117,7 @@ instance Connection IO where
 defaultConnectionOptions :: NatsConnectionOptions
 defaultConnectionOptions = def NatsConnectionOptions
 
--- | Default client timeout
+-- | Default client timeout, in millisseconds
 defaultTimeout :: Int
 defaultTimeout = 1000000
 
@@ -135,6 +136,7 @@ data Message = Message BS.ByteString  -- ^ A published message, containing a pay
              | Ping                   -- ^ Server ping challenge
              deriving Show
 
+-- | Sendable commands
 data Command where
     Connect     :: NatsConnectionOptions -> Command
     Publish     :: Subject -> BS.ByteString -> Command
@@ -143,6 +145,7 @@ data Command where
     Pong        :: Command
     deriving (Show)
 
+-- | Render a Command into a bytestring builder
 render :: Command -> Builder
 render (Connect opts) =
     stringUtf8 "CONNECT "
@@ -180,28 +183,28 @@ renderPayload :: BS.ByteString -> Builder
 renderPayload p = intDec (BS.length p) <> byteString lineTerminator <> byteString p
 
 sendCommand :: (Connection m) => Handle -> Command -> m ()
-sendCommand sock cmd = do
-    r <- liftIO $ timeout defaultTimeout $ writeBytes sock $ render cmd
+sendCommand handle cmd = do
+    r <- liftIO $ timeout defaultTimeout $ writeBytes handle $ render cmd
     case r of
         Nothing -> liftIO $ warningM "Nats.Client.Protocol" $ "Timed out sending command " ++ (show cmd)
         Just _  -> return ()
 
 -- | Receive the initial server banner from an INFO message, or an error message if it cannot be parsed.
 receiveServerBanner :: Connection m => Handle -> m (Either String NatsServerInfo)
-receiveServerBanner socket = do
-    bannerBytes <- readBytes socket maxBytes
+receiveServerBanner handle = do
+    bannerBytes <- readBytes handle maxBytes
     case A.parseOnly bannerParser bannerBytes of
         Left err -> return $ Left err
         Right (Banner b) -> return $ eitherDecodeStrict b
-    where maxBytes = 1024
+    where maxBytes = 10240
 
 receiveRawMessage :: Connection m => Handle -> Int -> m BS.ByteString
-receiveRawMessage sock maxPayloadSize = readBytes sock maxPayloadSize
+receiveRawMessage handle maxPayloadSize = readBytes handle maxPayloadSize
 
 -- | Receive a 'Message' from the server
 receiveMessage :: (MonadThrow m, Connection m) => Handle -> Int -> m Message
-receiveMessage sock maxPayloadSize = do
-    msg <- receiveRawMessage sock maxPayloadSize
+receiveMessage handle maxPayloadSize = do
+    msg <- receiveRawMessage handle maxPayloadSize
     case A.parseOnly messageParser msg of
         Left  err -> throwM $ MessageParseError err
         Right msg -> return msg
