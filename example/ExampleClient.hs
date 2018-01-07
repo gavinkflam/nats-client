@@ -3,7 +3,6 @@
 module Main where
 
 import Control.Monad (forever)
-import Network
 import Network.Nats.Client
 import qualified Data.ByteString as B
 

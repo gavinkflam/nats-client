@@ -1,12 +1,22 @@
+{-# LANGUAGE FlexibleContexts #-}
 {-# LANGUAGE OverloadedStrings #-}
+{-# LANGUAGE UndecidableInstances #-}
 module Network.Nats.Protocol.Tests where
 
 import Hedgehog
+import Control.Monad.State
+import Control.Monad.IO.Class (MonadIO)
+import Data.Aeson
+import qualified Data.ByteString.Char8 as BS
+import qualified Data.ByteString.Lazy.Char8 as LBS
+import Data.ByteString.Builder (toLazyByteString)
+import Data.ByteString.Handle (readHandle)
 import Data.Either
+import Data.Monoid ((<>))
 import Network.Nats.Protocol
+import System.IO (Handle, BufferMode(LineBuffering), hSetBuffering, stdin)
 import qualified Hedgehog.Gen as Gen
 import qualified Hedgehog.Range as Range
-import qualified Data.ByteString.Char8 as BS
 
 invalidBytes :: [Char]
 invalidBytes = " \t\n\r"
@@ -43,14 +53,21 @@ genNatsServerInfo =
   <*> Gen.maybe Gen.bool
   <*> Gen.int (Range.constant 0 1000000)
 
---prop_receiveServerBanner :: Property
---prop_receiveServerBanner =
---  withTests 5000 . property $ do
---  serverBannerBytes <- forAll genServerBannerBytes
---  assert $ 
+genNatsServerBannerBytes :: (MonadGen m, Functor m) => m LBS.ByteString
+genNatsServerBannerBytes = do
+  nsi <- genNatsServerInfo
+  return $ LBS.append (LBS.pack "INFO ") (encode nsi)
+
+prop_parseServerBanner :: Property
+prop_parseServerBanner =
+  withTests 5000 . property $ do
+  serverInfo <- forAll genNatsServerBannerBytes
+  let result = parseServerBanner $ LBS.toStrict serverInfo
+  assert $ isRight result
 
 tests :: IO Bool
 tests =
-  checkParallel $ Group "Network.Nats.Protocol.Tests" [
-  ("prop_parseSubject", prop_parseSubject)
+  checkSequential $ Group "Network.Nats.Protocol.Tests" [
+    ("prop_parseSubject", prop_parseSubject)
+  , ("prop_parseServerBanner", prop_parseServerBanner)
   ]
