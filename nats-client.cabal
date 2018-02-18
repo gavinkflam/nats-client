@@ -1,6 +1,6 @@
 name:                nats-client
 version:             0.1.0.0
--- synopsis:
+synopsis:            Another Haskell client for NATS
 -- description:
 homepage:            https://github.com/jpgneves/nats-client#readme
 license:             BSD3
@@ -17,9 +17,9 @@ library
   hs-source-dirs:      src
   exposed-modules:     Network.Nats.Client
                      , Network.Nats.Protocol
-  other-modules:       Network.Nats.Protocol.Message
                      , Network.Nats.Protocol.Types
-  ghc-options:         -Wall -Werror
+  other-modules:       Network.Nats.Protocol.Message
+  ghc-options:         -Wall -Werror -Wredundant-constraints
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , attoparsec
@@ -51,6 +51,8 @@ test-suite nats-client-test
   hs-source-dirs:      test
   main-is:             Spec.hs
   other-modules:       Network.Nats.Protocol.Tests
+                     , Network.Nats.Test.Generators
+  ghc-options:         -Wall -Werror
   build-depends:       base >=4.7 && < 5
                      , aeson
                      , bytestring

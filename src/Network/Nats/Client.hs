@@ -79,7 +79,7 @@ defaultNatsHost = "127.0.0.1"
 defaultNatsPort :: PortNumber
 defaultNatsPort = 4222 :: PortNumber
 
-makeNatsServerConnection :: (MonadThrow m, MonadIO m, Connection m) => ConnectionSettings -> MVar (S.Set (HostName, PortNumber)) -> m NatsServerConnection
+makeNatsServerConnection :: (MonadThrow m, Connection m) => ConnectionSettings -> MVar (S.Set (HostName, PortNumber)) -> m NatsServerConnection
 makeNatsServerConnection (ConnectionSettings host port) srvs = do
     mh <- liftIO $ timeout defaultTimeout $ connectTo host $ PortNumber port
     case mh of
@@ -99,7 +99,7 @@ makeNatsServerConnection (ConnectionSettings host port) srvs = do
                     return $ NatsServerConnection { natsHandle = h, natsInfo = info, maxMessages = maxMsgs }
                 Left err   -> throwM $ InvalidServerBanner err
 
-destroyNatsServerConnection :: (MonadIO m, Connection m) => NatsServerConnection -> m ()
+destroyNatsServerConnection :: Connection m => NatsServerConnection -> m ()
 destroyNatsServerConnection conn = liftIO $ hClose (natsHandle conn)
 
 -- | Connect to a NATS server
@@ -115,7 +115,7 @@ disconnect :: (MonadIO m) => NatsClient -> m ()
 disconnect conn = liftIO $ destroyAllResources (connections conn)
 
 -- | Perform a computation with a NATS connection
-withNats :: (MonadMask m, MonadThrow m, MonadIO m) => ConnectionSettings -> (NatsClient -> m b) -> m b
+withNats :: (MonadMask m, MonadIO m) => ConnectionSettings -> (NatsClient -> m b) -> m b
 withNats connectionSettings f = bracket (connect connectionSettings 10) disconnect f
 
 -- | Publish a 'BS.ByteString' to 'Subject'
@@ -131,7 +131,7 @@ doPublish subj msg conn = do
           payload_length = BS.length msg
 
 -- | Subscribe to a 'Subject' processing 'Message's via a 'MessageHandler'. Returns a 'SubscriptionId' used to cancel subscriptions
-subscribe :: (MonadIO m, MonadBaseControl IO m) => NatsClient -> Subject -> MessageHandler -> Maybe QueueGroup -> m SubscriptionId
+subscribe :: MonadIO m => NatsClient -> Subject -> MessageHandler -> Maybe QueueGroup -> m SubscriptionId
 subscribe conn subj callback _qgroup = do
     (c, pool) <- liftIO $ takeResource (connections conn)
     subId <- liftIO $ generateSubscriptionId 5

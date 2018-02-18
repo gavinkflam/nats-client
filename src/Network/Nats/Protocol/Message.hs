@@ -78,11 +78,18 @@ okParser = do
     A.endOfLine
     return OKMsg
 
+singleQuoted :: A.Parser BS.ByteString
+singleQuoted = do
+  _   <- A.char '\''
+  str <- A.takeWhile $ \c -> c /= '\''
+  _   <- A.char '\''
+  return str
+
 errorParser :: A.Parser Message
 errorParser = do
     _ <- A.string "-ERR"
     A.skipSpace
-    err <- A.takeByteString
+    err <- singleQuoted
     A.endOfLine
     return $ ErrorMsg err
 
