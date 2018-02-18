@@ -54,7 +54,9 @@ data NatsServerConnection = NatsServerConnection { natsHandle   :: Handle
                                                  }
 
 -- | NATS server connection settings
-data ConnectionSettings = ConnectionSettings HostName PortNumber deriving (Show)
+data ConnectionSettings = ConnectionSettings { host :: HostName
+                                             , port :: PortNumber
+                                             } deriving (Show)
 
 -- |'Message' handling function
 type MessageHandler = (Message -> IO ())
@@ -80,22 +82,22 @@ defaultNatsPort :: PortNumber
 defaultNatsPort = 4222 :: PortNumber
 
 makeNatsServerConnection :: (MonadThrow m, Connection m) => ConnectionSettings -> MVar (S.Set (HostName, PortNumber)) -> m NatsServerConnection
-makeNatsServerConnection (ConnectionSettings host port) srvs = do
-    mh <- liftIO $ timeout defaultTimeout $ connectTo host $ PortNumber port
+makeNatsServerConnection (ConnectionSettings ho po) srvs = do
+    mh <- liftIO $ timeout defaultTimeout $ connectTo ho $ PortNumber po
     case mh of
         Nothing -> do
-            liftIO $ warningM "Network.Nats.Client" $ "Timed out connecting to server: " ++ (show host) ++ ":" ++ (show port)
+            liftIO $ warningM "Network.Nats.Client" $ "Timed out connecting to server: " ++ (show ho) ++ ":" ++ (show po)
             throwM ConnectionTimeout
         Just h  -> do
             liftIO $ hSetBuffering h LineBuffering
             nInfo <- liftIO $ receiveServerBanner h
-            liftIO $ warningM "Network.Nats.Client" $ "Received server info " ++ show nInfo
+            liftIO $ infoM "Network.Nats.Client" $ "Received server info " ++ show nInfo
             case nInfo of
                 Right info -> do
                     sendConnect h defaultConnectionOptions
                     maxMsgs <- liftIO $ newIORef Nothing
                     _subsc <- liftIO $ newIORef Nothing
-                    liftIO $ modifyMVarMasked_ srvs $ \ss -> return $ S.insert (host, port) ss
+                    liftIO $ modifyMVarMasked_ srvs $ \ss -> return $ S.insert (ho, po) ss
                     return $ NatsServerConnection { natsHandle = h, natsInfo = info, maxMessages = maxMsgs }
                 Left err   -> throwM $ InvalidServerBanner err
 
