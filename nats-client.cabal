@@ -1,8 +1,8 @@
 name:                nats-client
 version:             0.1.0.0
-synopsis:            Another Haskell client for NATS
--- description:
-homepage:            https://github.com/jpgneves/nats-client#readme
+synopsis:            Another Haskell client for NATS (http://nats.io)
+description:         A simple client for NATS
+homepage:            https://bitbucket.org/jpgneves/nats-client#readme
 license:             BSD3
 license-file:        LICENSE
 author:              João Neves
@@ -13,13 +13,22 @@ build-type:          Simple
 extra-source-files:  README.md
 cabal-version:       >=1.10
 
+flag fail-on-warning
+     description: Enables -Werror
+     default:     False
+     manual:      True
+
 library
   hs-source-dirs:      src
   exposed-modules:     Network.Nats.Client
                      , Network.Nats.Protocol
                      , Network.Nats.Protocol.Types
   other-modules:       Network.Nats.Protocol.Message
-  ghc-options:         -Wall -Werror -Wredundant-constraints
+  if flag(fail-on-warning) {
+    ghc-options:       -Wall -Werror -Wredundant-constraints
+  } else {
+    ghc-options:       -Wall -Wredundant-constraints
+  }
   build-depends:       base >= 4.7 && < 5
                      , aeson
                      , attoparsec
@@ -43,7 +52,11 @@ executable "nats-client"
                      , bytestring
                      , nats-client
                      , network
-  ghc-options:         -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+  if flag(fail-on-warning) {
+    ghc-options:       -threaded -rtsopts -with-rtsopts=-N -Wall -Werror
+  } else {
+    ghc-options:       -threaded -rtsopts -with-rtsopts=-N -Wall
+  }
   default-language:    Haskell2010
 
 test-suite nats-client-test
@@ -52,7 +65,11 @@ test-suite nats-client-test
   main-is:             Spec.hs
   other-modules:       Network.Nats.Protocol.Tests
                      , Network.Nats.Test.Generators
-  ghc-options:         -Wall -Werror
+  if flag(fail-on-warning) {
+    ghc-options:       -Wall -Werror -Wredundant-constraints
+  } else {
+    ghc-options:       -Wall -Wredundant-constraints
+  }
   build-depends:       base >=4.7 && < 5
                      , aeson
                      , bytestring
