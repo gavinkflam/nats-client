@@ -1,7 +1,7 @@
 name:                nats-client
 version:             0.1.0.0
-synopsis:            Another Haskell client for NATS (http://nats.io)
-description:         A simple client for NATS
+synopsis:            Another Haskell client for NATS (https://nats.io)
+description:         A simple client library for the NATS messaging protocol
 homepage:            https://bitbucket.org/jpgneves/nats-client#readme
 license:             BSD3
 license-file:        LICENSE
