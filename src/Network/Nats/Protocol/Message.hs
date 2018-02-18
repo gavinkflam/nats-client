@@ -1,3 +1,7 @@
+{-|
+Module     : Network.Nats.Protocol.Message
+Description: Message definitions and utilities for the NATS protocol
+-}
 {-# LANGUAGE OverloadedStrings #-}
 
 module Network.Nats.Protocol.Message ( Message(..)
@@ -21,6 +25,7 @@ data Message = Message BS.ByteString  -- ^ A published message, containing a pay
              | Ping                   -- ^ Server ping challenge
              deriving Show
 
+-- | Specialized parsed to return a NatsServerInfo
 parseServerBanner :: BS.ByteString -> Either String NatsServerInfo
 parseServerBanner bannerBytes = do
   case A.parseOnly bannerParser bannerBytes of
@@ -28,10 +33,11 @@ parseServerBanner bannerBytes = do
     Right (Banner b) -> eitherDecodeStrict b
     Right a          -> Left $ "Expected server banner, got " ++ (show a)
 
+-- | Parses a Message from a ByteString
 parseMessage :: MonadThrow m => BS.ByteString -> m Message
 parseMessage m =
   case A.parseOnly messageParser m of
-    Left  err -> throwM $ MessageParseError err
+    Left  err -> throwM $ makeMessageParseError err
     Right msg -> return msg
   
 bannerParser :: A.Parser Message
@@ -49,7 +55,7 @@ parseSubject = A.parseOnly $ subjectParser <* A.endOfInput
 subjectParser :: A.Parser Subject
 subjectParser = do
     tokens <- (A.takeWhile1 $ not . A.isSpace) `A.sepBy` (A.char '.')
-    return $ Subject $ BS.intercalate "." tokens
+    return $ makeSubject $ BS.intercalate "." tokens
 
 msgParser :: A.Parser Message
 msgParser = do

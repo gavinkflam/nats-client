@@ -10,7 +10,6 @@ import Data.Aeson
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.ByteString.Builder (toLazyByteString)
-import Data.ByteString.Handle (readHandle)
 import Data.Either
 import Data.Monoid ((<>))
 import Network.Nats.Protocol

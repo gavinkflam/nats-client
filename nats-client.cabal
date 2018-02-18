@@ -17,6 +17,8 @@ library
   hs-source-dirs:      src
   exposed-modules:     Network.Nats.Client
                      , Network.Nats.Protocol
+  other-modules:       Network.Nats.Protocol.Message
+                     , Network.Nats.Protocol.Types
   ghc-options:         -Wall -Werror
   build-depends:       base >= 4.7 && < 5
                      , aeson
@@ -52,7 +54,6 @@ test-suite nats-client-test
   build-depends:       base >=4.7 && < 5
                      , aeson
                      , bytestring
-                     , bytestring-handle
                      , mtl
                      , nats-client
                      , test-framework

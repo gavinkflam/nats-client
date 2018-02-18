@@ -1,7 +1,20 @@
+{-|
+Module     : Network.Nats.Protocol.Types
+Description: NATS protocol types
+-}
 {-# LANGUAGE DeriveGeneric #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Nats.Protocol.Types where
+module Network.Nats.Protocol.Types ( makeMessageParseError
+                                   , makeSubject
+                                   , maxPayloadSize
+                                   , NatsServerInfo (..)
+                                   , NatsConnectionOptions (..)
+                                   , Subject (..)
+                                   , Subscription
+                                   , SubscriptionId (..)
+                                   )
+where
 
 import Control.Exception
 import Data.Aeson hiding (Object)
@@ -29,7 +42,11 @@ instance FromJSON NatsServerInfo where
 instance ToJSON NatsServerInfo where
     toEncoding = genericToEncoding defaultOptions{ fieldLabelModifier = stripPrefix "_srv_" }
 
--- | Client connection options sent when issuing a "CONNECT" to the server
+-- | Retrieve the maximum payload size, in bytes
+maxPayloadSize :: NatsServerInfo -> Int
+maxPayloadSize = _srv_max_payload
+
+-- | Client connection options sent when issuing a CONNECT to the server
 -- See <http://nats.io/documentation/internals/nats-protocol/>
 data NatsConnectionOptions = NatsConnectionOptions{ clnt_verbose      :: Bool   -- ^ Should server reply with an acknowledgment to every message?
                                                   , clnt_pedantic     :: Bool   -- ^ Turn on strict format checking
@@ -59,6 +76,10 @@ instance Default NatsConnectionOptions where
 -- | Name of a NATS subject. Must be a dot-separated alphanumeric string, with ">" and "." as wildcard characters. See <http://nats.io/documentation/internals/nats-protocol/>
 newtype Subject = Subject BS.ByteString deriving (Show)
 
+-- | Create a Subject with the given ByteString as message
+makeSubject :: BS.ByteString -> Subject
+makeSubject bs = Subject bs
+
 -- | A subscription to a 'Subject'
 data Subscription = Subscription { _subject        :: Subject
                                  , _subscriptionId :: SubscriptionId
@@ -78,3 +99,7 @@ data ProtocolError = MessageParseError String -- ^ The message from the server c
     deriving (Show, Typeable)
 
 instance Exception ProtocolError
+
+-- | Create MessageParseError with the given reason
+makeMessageParseError :: String -> ProtocolError
+makeMessageParseError reason = MessageParseError reason

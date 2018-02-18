@@ -6,14 +6,12 @@ Description : Implementation of the NATS client protocol
 {-# LANGUAGE GADTs #-}
 {-# LANGUAGE OverloadedStrings #-}
 
-module Network.Nats.Protocol ( Connection(..)
-                             , NatsServerInfo(NatsServerInfo)
+module Network.Nats.Protocol ( Connection (..)
                              , Subject(..)
                              , SubscriptionId(..)
                              , QueueGroup
                              , defaultConnectionOptions
                              , defaultTimeout
-                             , maxPayloadSize
                              , receiveMessage
                              , receiveServerBanner
                              , sendConnect
@@ -124,7 +122,7 @@ receiveMessage h maxBytes = do
     m <- receiveRawMessage h maxBytes
     parseMessage m
 
--- | Send a "CONNECT" message to the server
+-- | Send a CONNECT message to the server
 sendConnect :: Connection m => Handle -> NatsConnectionOptions -> m ()
 sendConnect h opts = sendCommand h $ Connect opts
 
@@ -140,10 +138,6 @@ sendSub h subj subId qgroup = sendCommand h $ Subscribe subj subId qgroup
 sendUnsub :: Connection m => Handle -> SubscriptionId -> Maybe Int -> m ()
 sendUnsub h subId max_msgs = sendCommand h $ Unsubscribe subId max_msgs
  
--- | Send a "PONG" message to the server, typically in reply to a "PING" challenge.
+-- | Send a PONG message to the server, typically in reply to a PING challenge.
 sendPong :: Connection m => Handle -> m ()
 sendPong h = sendCommand h $ Pong
-
--- | Maximum payload size accepted by the server
-maxPayloadSize :: NatsServerInfo -> Int
-maxPayloadSize = _srv_max_payload

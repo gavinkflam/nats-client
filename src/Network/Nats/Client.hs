@@ -14,7 +14,7 @@ module Network.Nats.Client (
     , subscribe
     , unsubscribe
     , withNats
-    , makeSubject
+    , createSubject
     , ConnectionSettings(..)
     , MessageHandler
     , NatsClient
@@ -180,8 +180,8 @@ connectionLoop h max_payload f maxMsgsRef = do
             receiveMessage h max_payload >>= (\m -> handleMessage h f m maxMsgs) >>= atomicWriteIORef maxMsgsRef >> connectionLoop h max_payload f maxMsgsRef
 
 -- | Attempt to create a 'Subject' from a 'BS.ByteString'
-makeSubject :: BS.ByteString -> Either String Subject
-makeSubject = parseSubject
+createSubject :: BS.ByteString -> Either String Subject
+createSubject = parseSubject
 
 generateSubscriptionId :: Int -> IO SubscriptionId
 generateSubscriptionId idLength = do

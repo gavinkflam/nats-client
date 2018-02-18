@@ -11,7 +11,7 @@ loop client subj = B.getLine >>= publish client subj
 
 main :: IO ()
 main = withNats connectionSettings $ \client -> do
-    case makeSubject "foo.bar.*" of
+    case createSubject "foo.bar.*" of
         Left err -> putStrLn $ "Invalid subject " ++ err
         Right subj -> do
             subId <- subscribe client subj (\(Message m) -> putStrLn $ show m) Nothing
