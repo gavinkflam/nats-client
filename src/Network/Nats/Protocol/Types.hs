@@ -13,6 +13,7 @@ module Network.Nats.Protocol.Types ( makeMessageParseError
                                    , Subject (..)
                                    , Subscription
                                    , SubscriptionId (..)
+                                   , ProtocolError (..)
                                    )
 where
 
@@ -100,6 +101,6 @@ data ProtocolError = MessageParseError String -- ^ The message from the server c
 
 instance Exception ProtocolError
 
--- | Create MessageParseError with the given reason
+-- | Create a 'MessageParseError' with the given reason
 makeMessageParseError :: String -> ProtocolError
 makeMessageParseError reason = MessageParseError reason
