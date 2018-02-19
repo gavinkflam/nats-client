@@ -4,5 +4,4 @@ pipelines:
   default:
     - step:
         script:
-          - stack upgrade # To ensure we have the fixes for the Cassava debacle
           - stack test
