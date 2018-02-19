@@ -14,31 +14,31 @@ import qualified Hedgehog.Range as Range
 invalidBytes :: [Char]
 invalidBytes = " \t\n\r"
 
-genValidSubjectBytes :: (MonadGen m, Functor m) => m BS.ByteString
+genValidSubjectBytes :: MonadGen m => m BS.ByteString
 genValidSubjectBytes =
   BS.intercalate "." <$> (Gen.list (Range.constant 1 5) $ Gen.utf8 (Range.constant 1 10) $ Gen.choice [ Gen.alphaNum, Gen.element (">*") ])
 
-genInvalidSubjectBytes :: (MonadGen m, Functor m) => m BS.ByteString
+genInvalidSubjectBytes :: MonadGen m => m BS.ByteString
 genInvalidSubjectBytes =
     BS.intercalate "." <$> (Gen.list (Range.constant 1 5) $ Gen.utf8 (Range.singleton 1) $ Gen.element (">*" ++ invalidBytes))
 
-genSubjectBytes :: (MonadGen m, Functor m) => m BS.ByteString
+genSubjectBytes :: MonadGen m => m BS.ByteString
 genSubjectBytes =
   Gen.choice [ genValidSubjectBytes
              , genInvalidSubjectBytes
              ]
 
-genSubject :: (MonadGen m, Functor m) => m Subject
+genSubject :: MonadGen m => m Subject
 genSubject =
     Subject . (BS.intercalate ".") <$> (Gen.list (Range.constant 1 5) $ Gen.choice [ Gen.utf8 (Range.constant 1 10) Gen.alphaNum
                                                                                    , Gen.utf8 (Range.singleton 1) $ Gen.element ">*"
                                                                                    ])
 
-genSubscriptionIdBytes :: (MonadGen m, Functor m) => m BS.ByteString
+genSubscriptionIdBytes :: MonadGen m => m BS.ByteString
 genSubscriptionIdBytes =
   Gen.utf8 (Range.constant 1 100) Gen.alphaNum
 
-genNatsServerInfo :: (MonadGen m, Functor m) => m NatsServerInfo
+genNatsServerInfo :: MonadGen m => m NatsServerInfo
 genNatsServerInfo =
   NatsServerInfo
   <$> Gen.text (Range.constant 1 10) Gen.alphaNum
@@ -50,7 +50,7 @@ genNatsServerInfo =
   <*> Gen.maybe Gen.bool
   <*> Gen.int (Range.constant 0 1000000)
 
-genNatsServerBannerBytes :: (MonadGen m, Functor m) => m LBS.ByteString
+genNatsServerBannerBytes :: MonadGen m => m LBS.ByteString
 genNatsServerBannerBytes = do
   nsi <- genNatsServerInfo
   return $ LBS.append (LBS.pack "INFO ") (encode nsi)
@@ -64,7 +64,7 @@ eolBuilder = byteString "\r\n"
 singleQuoteBuilder :: Builder
 singleQuoteBuilder = charUtf8 '\''
 
-genMessageMsgBytes :: (MonadGen m, Functor m) => m LBS.ByteString
+genMessageMsgBytes :: MonadGen m => m LBS.ByteString
 genMessageMsgBytes = do
   msg <- Gen.bytes (Range.constant 1 1024)
   subj <- genValidSubjectBytes
@@ -81,12 +81,12 @@ genMessageMsgBytes = do
     <> byteString msg
     <> eolBuilder
 
-genOkMsgBytes :: (MonadGen m, Functor m) => m LBS.ByteString
+genOkMsgBytes :: MonadGen m => m LBS.ByteString
 genOkMsgBytes = return $ toLazyByteString $
   stringUtf8 "+OK"
   <> eolBuilder
 
-genErrorMsgBytes :: (MonadGen m, Functor m) => m LBS.ByteString
+genErrorMsgBytes :: MonadGen m => m LBS.ByteString
 genErrorMsgBytes = do
   err <- Gen.list (Range.constant 1 1024) Gen.alphaNum
   return $ toLazyByteString $
@@ -97,12 +97,12 @@ genErrorMsgBytes = do
     <> singleQuoteBuilder
     <> eolBuilder
 
-genPingMsgBytes :: (MonadGen m, Functor m) => m LBS.ByteString
+genPingMsgBytes :: MonadGen m => m LBS.ByteString
 genPingMsgBytes = return $ toLazyByteString $
   stringUtf8 "PING"
   <> eolBuilder
 
-genMessageBytes :: (MonadGen m, Functor m) => m LBS.ByteString
+genMessageBytes :: MonadGen m => m LBS.ByteString
 genMessageBytes =
   Gen.choice [ genMessageMsgBytes
              , genOkMsgBytes
