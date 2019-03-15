@@ -134,13 +134,13 @@ doPublish subj msg conn = do
 
 -- | Subscribe to a 'Subject' processing 'Message's via a 'MessageHandler'. Returns a 'SubscriptionId' used to cancel subscriptions
 subscribe :: MonadIO m => NatsClient -> Subject -> MessageHandler -> Maybe QueueGroup -> m SubscriptionId
-subscribe conn subj callback _qgroup = do
+subscribe conn subj callback qgroup = do
     (c, pool) <- liftIO $ takeResource (connections conn)
     subId <- liftIO $ generateSubscriptionId 5
     let sock        = (natsHandle c)
         max_payload = (maxPayloadSize (natsInfo c))
         maxMsgs     = (maxMessages c)
-    liftIO $ sendSub sock subj subId Nothing
+    liftIO $ sendSub sock subj subId qgroup
     _ <- liftIO $ forkFinally (connectionLoop sock max_payload callback maxMsgs) $ handleCompletion sock (connections conn) pool c
     liftIO $ modifyMVarMasked_ (subscriptions conn) $ \m -> return $ M.insert subId c m
     return subId

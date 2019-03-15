@@ -77,9 +77,11 @@ render (Publish subj payload) =
     <> spaceBuilder
     <> renderPayload payload
     <> byteString lineTerminator
-render (Subscribe subj subId _qgroup) =
+render (Subscribe subj subId qgroup) =
     stringUtf8 "SUB "
     <> renderSubject subj
+    <> spaceBuilder
+    <> maybe mempty renderQueueGroup qgroup
     <> spaceBuilder
     <> renderSubscriptionId subId
     <> spaceBuilder
@@ -100,6 +102,9 @@ lineTerminator = "\r\n"
 
 renderSubject :: Subject -> Builder
 renderSubject (Subject s) = byteString s
+
+renderQueueGroup :: QueueGroup -> Builder
+renderQueueGroup (QueueGroup name) = byteString name
 
 renderSubscriptionId :: SubscriptionId -> Builder
 renderSubscriptionId (SubscriptionId i) = byteString i
