@@ -9,7 +9,7 @@ Description : Implementation of the NATS client protocol
 module Network.Nats.Protocol ( Connection (..)
                              , Subject(..)
                              , SubscriptionId(..)
-                             , QueueGroup
+                             , QueueGroup(..)
                              , defaultConnectionOptions
                              , defaultTimeout
                              , receiveMessage
