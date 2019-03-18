@@ -133,17 +133,36 @@ doPublish subj msg conn = do
           payload_length = BS.length msg
 
 -- | Subscribe to a 'Subject' processing 'Message's via a 'MessageHandler'. Returns a 'SubscriptionId' used to cancel subscriptions
-subscribe :: MonadIO m => NatsClient -> Subject -> MessageHandler -> Maybe QueueGroup -> m SubscriptionId
+subscribe
+    :: MonadIO m
+    => NatsClient
+    -> Subject
+    -> MessageHandler
+    -> Maybe QueueGroup
+    -> m (SubscriptionId, MVar (Maybe SomeException))
 subscribe conn subj callback qgroup = do
     (c, pool) <- liftIO $ takeResource (connections conn)
     subId <- liftIO $ generateSubscriptionId 5
-    let sock        = (natsHandle c)
-        max_payload = (maxPayloadSize (natsInfo c))
-        maxMsgs     = (maxMessages c)
+    let sock        = natsHandle c
+        max_payload = maxPayloadSize $ natsInfo c
+        maxMsgs     = maxMessages c
+        loop        = connectionLoop sock max_payload callback maxMsgs
     liftIO $ sendSub sock subj subId qgroup
-    _ <- liftIO $ forkFinally (connectionLoop sock max_payload callback maxMsgs) $ handleCompletion sock (connections conn) pool c
-    liftIO $ modifyMVarMasked_ (subscriptions conn) $ \m -> return $ M.insert subId c m
-    return subId
+    mvar <- liftIO newEmptyMVar
+    _ <- liftIO $ forkFinally loop $ handleCompletion sock pool c mvar
+    liftIO $ modifyMVarMasked_ (subscriptions conn) $
+        \m -> return $ M.insert subId c m
+    return (subId, mvar)
+  where
+    handleCompletion h lpool c mvar (Left exn) = do
+        hClose h
+        destroyResource (connections conn) lpool c
+        putMVar mvar $ Just exn
+    handleCompletion _ lpool c mvar _          = do
+        debugM "Network.Nats.Client" "Subscription finished"
+        atomicWriteIORef (maxMessages c) Nothing
+        putResource lpool c
+        putMVar mvar Nothing
 
 -- | Unsubscribe to a 'SubjectId' (returned by 'subscribe'), with an optional max amount of additional messages to listen to
 unsubscribe :: (MonadIO m, MonadBaseControl IO m) => NatsClient -> SubscriptionId -> Maybe Int -> m ()
@@ -161,17 +180,6 @@ doUnsubscribe m subId maxMsgs = do
             warningM "Network.Nats.Client" $ "Could not find subscription " ++ (show subId)
         Just c -> do
             atomicWriteIORef (maxMessages c) (Just maxMsgs)
-
-
-handleCompletion :: Handle -> Pool NatsServerConnection -> LocalPool NatsServerConnection -> NatsServerConnection -> Either SomeException b -> IO ()
-handleCompletion h pool lpool conn (Left exn) = do
-    warningM "Network.Nats.Client" $ "Connection closed: " ++ (show exn)
-    hClose h
-    destroyResource pool lpool conn
-handleCompletion _ _ lpool conn _          = do
-    debugM "Network.Nats.Client" "Subscription finished"
-    atomicWriteIORef (maxMessages conn) Nothing
-    putResource lpool conn
 
 connectionLoop :: Handle -> Int -> (Message -> IO ()) -> IORef (Maybe Int) -> IO ()
 connectionLoop h max_payload f maxMsgsRef = do

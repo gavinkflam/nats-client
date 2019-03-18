@@ -10,11 +10,12 @@ loop :: NatsClient -> Subject -> IO ()
 loop client subj = B.getLine >>= publish client subj
 
 main :: IO ()
-main = withNats connectionSettings $ \client -> do
+main = withNats connectionSettings $ \client ->
     case createSubject "foo.*" of
         Left err -> putStrLn $ "Invalid subject " ++ err
         Right subj -> do
-            subId <- subscribe client subj (\m -> putStrLn $ "RECV: " ++ (show m)) Nothing
+            (subId, _) <- subscribe client subj
+                (\m -> putStrLn $ "RECV: " ++ show m) Nothing
             unsubscribe client subId (Just 90)
             forever $ loop client subj
     where
