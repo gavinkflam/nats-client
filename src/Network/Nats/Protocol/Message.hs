@@ -62,16 +62,30 @@ msgParser :: A.Parser Message
 msgParser = do
     _ <- A.string "MSG"
     A.skipSpace
-    _subject <- subjectParser
-    A.skipSpace
-    _subscriptionId <- A.takeTill A.isSpace
-    _ <- A.option "" (A.takeTill A.isSpace)
-    A.skipSpace
-    msgLength <- A.decimal
-    _ <- A.string "\r\n"
+    (_subject, _subscriptionId, _replyTo, msgLength) <-
+      msgMetadataParser1 <|> msgMetadataParser2
     payload <- A.take msgLength
     _ <- A.string "\r\n"
     return $ Message payload
+
+msgMetadataParser1
+  :: A.Parser (Subject, BS.ByteString, Maybe BS.ByteString, Int)
+msgMetadataParser1 = do
+    subject <- subjectParser
+    subscriptionId <- A.skipSpace >> A.takeTill A.isSpace
+    replyTo <- A.skipSpace >> A.takeTill A.isSpace
+    msgLength <- A.skipSpace >> A.decimal
+    _ <- A.string "\r\n"
+    return (subject, subscriptionId, Just replyTo, msgLength)
+
+msgMetadataParser2
+  :: A.Parser (Subject, BS.ByteString, Maybe BS.ByteString, Int)
+msgMetadataParser2 = do
+    subject <- subjectParser
+    subscriptionId <- A.skipSpace >> A.takeTill A.isSpace
+    msgLength <- A.skipSpace >> A.decimal
+    _ <- A.string "\r\n"
+    return (subject, subscriptionId, Nothing, msgLength)
 
 okParser :: A.Parser Message
 okParser = do
