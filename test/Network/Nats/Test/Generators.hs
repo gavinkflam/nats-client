@@ -53,7 +53,7 @@ genNatsServerInfo =
 genNatsServerBannerBytes :: MonadGen m => m LBS.ByteString
 genNatsServerBannerBytes = do
   nsi <- genNatsServerInfo
-  return $ LBS.append (LBS.pack "INFO ") (encode nsi)
+  return $ "INFO " <> encode nsi <> "\r\n"
 
 spaceBuilder :: Builder
 spaceBuilder = charUtf8 ' '

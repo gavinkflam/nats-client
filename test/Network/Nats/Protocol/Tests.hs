@@ -4,6 +4,7 @@
 module Network.Nats.Protocol.Tests where
 
 import Hedgehog
+import qualified Data.Attoparsec.ByteString.Char8 as A
 import qualified Data.ByteString.Char8 as BS
 import qualified Data.ByteString.Lazy.Char8 as LBS
 import Data.Either
@@ -29,8 +30,11 @@ prop_parseMessage :: Property
 prop_parseMessage =
   withTests 5000 . property $ do
   msg <- forAll genMessageBytes
-  _ <- evalM $ parseMessage $ LBS.toStrict msg
-  success
+  assert $ isDone $ parseMessage $ LBS.toStrict msg
+
+isDone :: A.IResult i a -> Bool
+isDone (A.Done _ _) = True
+isDone _            = False
 
 tests :: IO Bool
 tests =

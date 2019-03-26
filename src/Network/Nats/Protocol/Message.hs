@@ -5,13 +5,13 @@ Description: Message definitions and utilities for the NATS protocol
 {-# LANGUAGE OverloadedStrings #-}
 
 module Network.Nats.Protocol.Message ( Message(..)
+                                     , PartialMessage
                                      , parseMessage
                                      , parseServerBanner
                                      , parseSubject
                                      ) where
 
 import Control.Applicative ((<|>))
-import Control.Monad.Catch
 import Data.Aeson (eitherDecodeStrict)
 import Data.Char (isSpace)
 import Network.Nats.Protocol.Types
@@ -26,6 +26,9 @@ data Message = Message BS.ByteString  -- ^ A published message, containing a pay
              | Ping                   -- ^ Server ping challenge
              deriving Show
 
+-- | Parser function for incrementally parsing a message.
+type PartialMessage = BS.ByteString -> A.Result Message
+
 -- | Specialized parsed to return a NatsServerInfo
 parseServerBanner :: BS.ByteString -> Either String NatsServerInfo
 parseServerBanner bannerBytes = do
@@ -35,18 +38,14 @@ parseServerBanner bannerBytes = do
     Right a          -> Left $ "Expected server banner, got " ++ (show a)
 
 -- | Parses a Message from a ByteString
-parseMessage :: MonadThrow m => BS.ByteString -> m Message
-parseMessage m =
-  case A.parseOnly messageParser m of
-    Left  err -> throwM $ makeMessageParseError $
-      "Reason: " ++ err ++ " Payload: " ++ BS.unpack m
-    Right msg -> return msg
+parseMessage :: BS.ByteString -> A.Result Message
+parseMessage = A.parse messageParser
   
 bannerParser :: A.Parser Message
 bannerParser = do
     _ <- A.string "INFO"
-    A.skipSpace
-    banner <- A.takeByteString
+    banner <- A.skipSpace >> A.takeTill (== '\r')
+    _ <- A.string "\r\n"
     return $ Banner banner
 
 -- | Parse a 'BS.ByteString' into a 'Subject' or return an error message. See <http://nats.io/documentation/internals/nats-protocol/>
@@ -91,7 +90,7 @@ msgMetadataParser2 = do
 okParser :: A.Parser Message
 okParser = do
     _ <- A.string "+OK"
-    A.endOfLine
+    _ <- A.string "\r\n"
     return OKMsg
 
 singleQuoted :: A.Parser BS.ByteString
@@ -106,12 +105,12 @@ errorParser = do
     _ <- A.string "-ERR"
     A.skipSpace
     err <- singleQuoted
-    A.endOfLine
+    _ <- A.string "\r\n"
     return $ ErrorMsg err
 
 pingParser :: A.Parser Message
 pingParser = do
-    A.string "PING" *> A.endOfLine
+    _ <- A.string "PING" *> A.string "\r\n"
     return Ping
 
 messageParser :: A.Parser Message

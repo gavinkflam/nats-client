@@ -146,7 +146,7 @@ subscribe conn subj callback qgroup = do
     let sock        = natsHandle c
         max_payload = maxPayloadSize $ natsInfo c
         maxMsgs     = maxMessages c
-        loop        = connectionLoop sock max_payload callback maxMsgs
+        loop        = connectionLoop mempty sock max_payload callback maxMsgs
     liftIO $ sendSub sock subj subId qgroup
     mvar <- liftIO newEmptyMVar
     _ <- liftIO $ forkFinally loop $ handleCompletion sock pool c mvar
@@ -181,13 +181,23 @@ doUnsubscribe m subId maxMsgs = do
         Just c -> do
             atomicWriteIORef (maxMessages c) (Just maxMsgs)
 
-connectionLoop :: Handle -> Int -> (Message -> IO ()) -> IORef (Maybe Int) -> IO ()
-connectionLoop h max_payload f maxMsgsRef = do
+connectionLoop
+    :: BS.ByteString
+    -> Handle
+    -> Int
+    -> (Message -> IO ())
+    -> IORef (Maybe Int)
+    -> IO ()
+connectionLoop residual h max_payload f maxMsgsRef = do
     maxMsgs <- readIORef maxMsgsRef
     case maxMsgs of
         Just 0 -> return ()
-        _      ->
-            receiveMessage h max_payload >>= (\m -> handleMessage h f m maxMsgs) >>= atomicWriteIORef maxMsgsRef >> connectionLoop h max_payload f maxMsgsRef
+        _      -> do
+            (residual', message) <-
+                receiveMessage residual Nothing h max_payload
+            count <- handleMessage h f message maxMsgs
+            atomicWriteIORef maxMsgsRef count
+            connectionLoop residual' h max_payload f maxMsgsRef
 
 -- | Attempt to create a 'Subject' from a 'BS.ByteString'
 createSubject :: BS.ByteString -> Either String Subject

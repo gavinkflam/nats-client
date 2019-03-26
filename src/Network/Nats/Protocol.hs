@@ -26,8 +26,10 @@ module Network.Nats.Protocol ( Connection (..)
 import Control.Monad.Catch
 import Control.Monad.IO.Class (MonadIO)
 import Data.Aeson (encode)
+import qualified Data.Attoparsec.ByteString.Char8 as A
 import Data.ByteString.Builder
 import Data.Default (def)
+import Data.List (intercalate)
 import Data.Monoid
 import Network.Nats.Protocol.Message
 import Network.Nats.Protocol.Types
@@ -122,10 +124,30 @@ receiveServerBanner h = do
   where maxBytes = 10240
 
 -- | Receive a 'Message' from the server
-receiveMessage :: (MonadThrow m, Connection m) => Handle -> Int -> m Message
-receiveMessage h maxBytes = do
-    m <- receiveRawMessage h maxBytes
-    parseMessage m
+receiveMessage
+  :: (MonadThrow m, Connection m)
+  => BS.ByteString
+  -> Maybe PartialMessage
+  -> Handle
+  -> Int
+  -> m (BS.ByteString, Message)
+receiveMessage input continue h maxBytes = do
+    bytes <- receiveRawMessage h maxBytes
+    case go bytes of
+      A.Done residual message     -> return (residual, message)
+      A.Partial partialMessage    ->
+        receiveMessage "" (Just partialMessage) h maxBytes
+      A.Fail residual context err ->
+        throwM $ makeMessageParseError $
+          "Reason: `" ++ err ++ "` "
+            ++ "Context: (" ++ intercalate ", " context ++ ") "
+            ++ "Payload: (" ++ BS.unpack bytes ++ ") "
+            ++ "Residual: (" ++ BS.unpack residual ++ ") "
+  where
+    go bytes =
+      case continue of
+          Nothing -> parseMessage $ input <> bytes
+          Just c  -> c $ input <> bytes
 
 -- | Send a CONNECT message to the server
 sendConnect :: Connection m => Handle -> NatsConnectionOptions -> m ()

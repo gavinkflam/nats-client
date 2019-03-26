@@ -75,6 +75,7 @@ test-suite nats-client-test
   }
   build-depends:       base >=4.7 && < 5
                      , aeson
+                     , attoparsec
                      , bytestring
                      , mtl
                      , nats-client
