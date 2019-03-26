@@ -67,9 +67,9 @@ msgParser = do
     _ <- A.option "" (A.takeTill A.isSpace)
     A.skipSpace
     msgLength <- A.decimal
-    A.endOfLine
+    _ <- A.string "\r\n"
     payload <- A.take msgLength
-    A.endOfLine
+    _ <- A.string "\r\n"
     return $ Message payload
 
 okParser :: A.Parser Message
