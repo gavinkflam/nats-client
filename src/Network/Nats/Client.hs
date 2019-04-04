@@ -65,6 +65,22 @@ data NatsError = ConnectionFailure
                | ConnectionTimeout
                | InvalidServerBanner String
                | PayloadTooLarge String
+               | UnknownProtocolOperation
+               | AttemptedToConnectToRoutePort
+               | AuthorizationViolation
+               | AuthorizationTimeout
+               | InvalidClientProtocol
+               | MaximumControlLineExceeded
+               | ParserError
+               | TLSRequired
+               | StaleConnection
+               | MaximumConnectionsExceeded
+               | SlowConsumer
+               | MaximumPayloadViolation
+               | InvalidSubject
+               | PermissionsViolationForSubscription String
+               | PermissionsViolationForPublish String
+               | UnknownError String
     deriving (Show, Typeable)
 
 instance Exception NatsError
@@ -208,15 +224,52 @@ generateSubscriptionId idLength = do
     gen <- getStdGen
     return $ SubscriptionId $ BS.pack $ take idLength $ (randoms gen :: [Char])
 
-handleMessage :: Handle -> (Message -> IO ()) -> Message -> Maybe Int -> IO (Maybe Int)
+handleMessage
+    :: (MonadThrow m, MonadIO m)
+    => Handle -> (Message -> IO ()) -> Message -> Maybe Int -> m (Maybe Int)
 handleMessage h    _ Ping            m = do
-    sendPong h
+    liftIO $ sendPong h
     return m
 handleMessage _    f msg@(Message _) maxMsgs = do
-    f msg
+    liftIO $ f msg
     case maxMsgs of
         Nothing  -> return Nothing
         (Just n) -> return $ Just (n - 1)
+handleMessage _    _ (ErrorMsg errorMessage) _ =
+    throw $ parseErrorMessage errorMessage
+  where
+    parseErrorMessage "Authorization Violation"          =
+        AuthorizationViolation
+    parseErrorMessage "Authorization Timeout"            =
+        AuthorizationTimeout
+    parseErrorMessage "Invalid Client Protocol"          =
+        InvalidClientProtocol
+    parseErrorMessage "Maximum Control Line Exceeded"    =
+        MaximumControlLineExceeded
+    parseErrorMessage "Parser Error"                     =
+        ParserError
+    parseErrorMessage "Secure Connection - TLS Required" =
+        TLSRequired
+    parseErrorMessage "Stale Connection"                 =
+        StaleConnection
+    parseErrorMessage "Maximum Connections Exceeded"     =
+        MaximumConnectionsExceeded
+    parseErrorMessage "Slow Consumer"                    =
+        SlowConsumer
+    parseErrorMessage "Maximum Payload Violation"        =
+        MaximumPayloadViolation
+    parseErrorMessage "Invalid Subject"                  =
+        InvalidSubject
+    parseErrorMessage _
+        | BS.isPrefixOf subPermissionsViolationPrefix errorMessage =
+            PermissionsViolationForSubscription $ BS.unpack $ snd $
+                BS.breakSubstring subPermissionsViolationPrefix errorMessage
+        | BS.isPrefixOf subPermissionsViolationPrefix errorMessage =
+            PermissionsViolationForPublish $ BS.unpack $ snd $
+                BS.breakSubstring pubPermissionsViolationPrefix errorMessage
+        | otherwise = UnknownError $ BS.unpack errorMessage
+    subPermissionsViolationPrefix = "Permissions Violation for Subscription to "
+    pubPermissionsViolationPrefix = "Permissions Violation for Publish to "
 handleMessage _    _ msg               m = do
-    warningM "Network.Nats.Client" $ "Received " ++ (show msg)
+    liftIO $ warningM "Network.Nats.Client" $ "Received " ++ show msg
     return m
