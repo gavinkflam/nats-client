@@ -13,7 +13,6 @@ module Network.Nats.Protocol.Message ( Message(..)
 
 import Control.Applicative ((<|>))
 import Data.Aeson (eitherDecodeStrict)
-import Data.Char (isSpace)
 import Network.Nats.Protocol.Types
 import qualified Data.Attoparsec.ByteString.Char8 as A
 import qualified Data.ByteString.Char8 as BS
@@ -55,7 +54,7 @@ parseSubject = A.parseOnly $ subjectParser <* A.endOfInput
 -- | The actual parser is quite dumb, it doesn't try to validate silly subjects.
 subjectParser :: A.Parser Subject
 subjectParser = do
-    tokens <- (A.takeWhile1 $ not . isSpace) `A.sepBy` (A.char '.')
+    tokens <- A.takeWhile1 (not . A.isSpace) `A.sepBy` A.char '.'
     return $ makeSubject $ BS.intercalate "." tokens
 
 msgParser :: A.Parser Message
@@ -72,8 +71,8 @@ msgMetadataParser1
   :: A.Parser (Subject, BS.ByteString, Maybe BS.ByteString, Int)
 msgMetadataParser1 = do
     subject <- subjectParser
-    subscriptionId <- A.skipSpace >> A.takeTill isSpace
-    replyTo <- A.skipSpace >> A.takeTill isSpace
+    subscriptionId <- A.skipSpace >> A.takeTill A.isSpace
+    replyTo <- A.skipSpace >> A.takeTill A.isSpace
     msgLength <- A.skipSpace >> A.decimal
     _ <- A.string "\r\n"
     return (subject, subscriptionId, Just replyTo, msgLength)
@@ -82,7 +81,7 @@ msgMetadataParser2
   :: A.Parser (Subject, BS.ByteString, Maybe BS.ByteString, Int)
 msgMetadataParser2 = do
     subject <- subjectParser
-    subscriptionId <- A.skipSpace >> A.takeTill isSpace
+    subscriptionId <- A.skipSpace >> A.takeTill A.isSpace
     msgLength <- A.skipSpace >> A.decimal
     _ <- A.string "\r\n"
     return (subject, subscriptionId, Nothing, msgLength)
